@@ -82,6 +82,18 @@ class _ExpensesPageState extends State<ExpensesPage> {
     return const Color(0xFF2563EB);
   }
 
+  Future<void> _showExpenseDialog({
+    QueryDocumentSnapshot<Map<String, dynamic>>? doc,
+  }) async {
+    await showDialog(
+      context: context,
+      builder: (_) => _ExpenseFormDialog(
+        financeService: _financeService,
+        expenseDoc: doc,
+      ),
+    );
+  }
+
   Future<void> _confirmDelete({
     required String expenseId,
     required String title,
@@ -133,6 +145,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
           'Spese',
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
+        centerTitle: true,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
       ),
@@ -144,8 +157,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
 
           final totalAll = docs.fold<double>(0, (sum, doc) {
             final amount = doc.data()['amount'];
+
             if (amount is int) return sum + amount.toDouble();
             if (amount is double) return sum + amount;
+
             return sum;
           });
 
@@ -153,8 +168,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
             return doc.data()['is_paid'] != true;
           }).fold<double>(0, (sum, doc) {
             final amount = doc.data()['amount'];
+
             if (amount is int) return sum + amount.toDouble();
             if (amount is double) return sum + amount;
+
             return sum;
           });
 
@@ -169,6 +186,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                     _ExpensesHeader(
                       totalAll: _currencyFormatter.format(totalAll),
                       totalUnpaid: _currencyFormatter.format(totalUnpaid),
+                      onAddExpense: () => _showExpenseDialog(),
                     ),
                     const SizedBox(height: 22),
                     _FilterBar(
@@ -196,7 +214,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
 
                           final title = data['title'] ?? 'Spesa';
                           final category = data['category'] ?? 'Generale';
-                          final amount = (data['amount'] ?? 0).toDouble();
+
+                          final rawAmount = data['amount'];
+                          final amount = rawAmount is int
+                              ? rawAmount.toDouble()
+                              : rawAmount is double
+                                  ? rawAmount
+                                  : 0.0;
+
                           final isPaid = data['is_paid'] == true;
                           final reminderEnabled =
                               data['reminder_enabled'] == true;
@@ -207,8 +232,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
                               : DateTime.now();
 
                           return _ExpenseCard(
-                            title: title,
-                            category: category,
+                            title: title.toString(),
+                            category: category.toString(),
                             amount: _currencyFormatter.format(amount),
                             dueDate: _dateFormatter.format(dueDate),
                             deadlineLabel: _deadlineLabel(dueDate, isPaid),
@@ -219,9 +244,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
                               expenseId: doc.id,
                               currentValue: isPaid,
                             ),
+                            onEdit: () => _showExpenseDialog(doc: doc),
                             onDelete: () => _confirmDelete(
                               expenseId: doc.id,
-                              title: title,
+                              title: title.toString(),
                             ),
                           );
                         }).toList(),
@@ -240,10 +266,12 @@ class _ExpensesPageState extends State<ExpensesPage> {
 class _ExpensesHeader extends StatelessWidget {
   final String totalAll;
   final String totalUnpaid;
+  final VoidCallback onAddExpense;
 
   const _ExpensesHeader({
     required this.totalAll,
     required this.totalUnpaid,
+    required this.onAddExpense,
   });
 
   @override
@@ -284,6 +312,7 @@ class _ExpensesHeader extends StatelessWidget {
           Wrap(
             spacing: 12,
             runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _HeaderMiniStat(
                 label: 'Totale spese',
@@ -292,6 +321,14 @@ class _ExpensesHeader extends StatelessWidget {
               _HeaderMiniStat(
                 label: 'Da pagare',
                 value: totalUnpaid,
+              ),
+              SizedBox(
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: onAddExpense,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Nuova spesa'),
+                ),
               ),
             ],
           ),
@@ -421,6 +458,7 @@ class _ExpenseCard extends StatelessWidget {
   final bool isPaid;
   final bool reminderEnabled;
   final VoidCallback onTogglePaid;
+  final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _ExpenseCard({
@@ -433,6 +471,7 @@ class _ExpenseCard extends StatelessWidget {
     required this.isPaid,
     required this.reminderEnabled,
     required this.onTogglePaid,
+    required this.onEdit,
     required this.onDelete,
   });
 
@@ -502,29 +541,27 @@ class _ExpenseCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     _InfoBadge(
                       text: category,
                       icon: Icons.category_rounded,
                     ),
-                    const SizedBox(width: 8),
                     _InfoBadge(
                       text: dueDate,
                       icon: Icons.calendar_month_rounded,
                     ),
-                    const SizedBox(width: 8),
                     _ColoredBadge(
                       text: deadlineLabel,
                       color: deadlineColor,
                     ),
-                    if (reminderEnabled) ...[
-                      const SizedBox(width: 8),
+                    if (reminderEnabled)
                       const _InfoBadge(
                         text: 'Promemoria',
                         icon: Icons.notifications_active_rounded,
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -538,13 +575,16 @@ class _ExpenseCard extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onTogglePaid,
                 icon: Icon(
-                  isPaid
-                      ? Icons.undo_rounded
-                      : Icons.check_circle_rounded,
+                  isPaid ? Icons.undo_rounded : Icons.check_circle_rounded,
                 ),
                 label: Text(
                   isPaid ? 'Da pagare' : 'Pagata',
                 ),
+              ),
+              IconButton(
+                tooltip: 'Modifica',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined),
               ),
               IconButton(
                 tooltip: 'Elimina',
@@ -666,12 +706,293 @@ class _EmptyExpenses extends StatelessWidget {
           ),
           SizedBox(height: 8),
           Text(
-            'Aggiungi una spesa dalla dashboard oppure cambia filtro.',
+            'Aggiungi una nuova spesa oppure cambia filtro.',
             style: TextStyle(
               color: Color(0xFF64748B),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ExpenseFormDialog extends StatefulWidget {
+  final FinanceService financeService;
+  final QueryDocumentSnapshot<Map<String, dynamic>>? expenseDoc;
+
+  const _ExpenseFormDialog({
+    required this.financeService,
+    this.expenseDoc,
+  });
+
+  @override
+  State<_ExpenseFormDialog> createState() => _ExpenseFormDialogState();
+}
+
+class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
+  final _formKey = GlobalKey<FormState>();
+
+  late final TextEditingController _titleController;
+  late final TextEditingController _amountController;
+  late final TextEditingController _categoryController;
+
+  late DateTime _selectedDueDate;
+  late bool _isPaid;
+  late bool _reminderEnabled;
+
+  bool _loading = false;
+
+  bool get _isEditMode => widget.expenseDoc != null;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final data = widget.expenseDoc?.data();
+
+    final title = data?['title'] ?? '';
+    final category = data?['category'] ?? 'Generale';
+
+    final rawAmount = data?['amount'];
+    final amount = rawAmount is int
+        ? rawAmount.toDouble()
+        : rawAmount is double
+            ? rawAmount
+            : 0.0;
+
+    final rawDueDate = data?['due_date'];
+    final dueDate = rawDueDate is Timestamp
+        ? rawDueDate.toDate()
+        : DateTime.now();
+
+    _titleController = TextEditingController(text: title.toString());
+
+    _amountController = TextEditingController(
+      text: _isEditMode ? amount.toStringAsFixed(2).replaceAll('.', ',') : '',
+    );
+
+    _categoryController = TextEditingController(text: category.toString());
+
+    _selectedDueDate = dueDate;
+
+    _isPaid = data?['is_paid'] == true;
+
+    _reminderEnabled = _isEditMode
+        ? (data?['reminder_enabled'] == true)
+        : true;
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _amountController.dispose();
+    _categoryController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDueDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDueDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedDueDate = picked;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _loading = true);
+
+    final amount = double.parse(
+      _amountController.text.replaceAll(',', '.'),
+    );
+
+    if (_isEditMode) {
+      await widget.financeService.updateExpense(
+        expenseId: widget.expenseDoc!.id,
+        title: _titleController.text.trim(),
+        amount: amount,
+        dueDate: _selectedDueDate,
+        category: _categoryController.text.trim(),
+        isPaid: _isPaid,
+        reminderEnabled: _reminderEnabled,
+      );
+    } else {
+      await widget.financeService.addExpense(
+        title: _titleController.text.trim(),
+        amount: amount,
+        dueDate: _selectedDueDate,
+        category: _categoryController.text.trim(),
+        isPaid: _isPaid,
+        reminderEnabled: _reminderEnabled,
+      );
+    }
+
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = _isEditMode ? 'Modifica spesa' : 'Nuova spesa';
+
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: 440,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                _TextInput(
+                  controller: _titleController,
+                  label: 'Titolo',
+                  validatorText: 'Inserisci il titolo',
+                ),
+                const SizedBox(height: 12),
+                _TextInput(
+                  controller: _amountController,
+                  label: 'Importo',
+                  validatorText: 'Inserisci l’importo',
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 12),
+                _TextInput(
+                  controller: _categoryController,
+                  label: 'Categoria',
+                  validatorText: 'Inserisci la categoria',
+                ),
+                const SizedBox(height: 12),
+                _DateButton(
+                  label: 'Data scadenza',
+                  date: _selectedDueDate,
+                  onTap: _pickDueDate,
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _isPaid,
+                  onChanged: (value) {
+                    setState(() {
+                      _isPaid = value ?? false;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Spesa già pagata'),
+                ),
+                CheckboxListTile(
+                  value: _reminderEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _reminderEnabled = value ?? true;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Promemoria attivo'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Annulla'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _save,
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(_isEditMode ? 'Aggiorna' : 'Salva'),
+        ),
+      ],
+    );
+  }
+}
+
+class _TextInput extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String validatorText;
+  final TextInputType? keyboardType;
+
+  const _TextInput({
+    required this.controller,
+    required this.label,
+    required this.validatorText,
+    this.keyboardType,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      validator: (value) {
+        if (value == null || value.trim().isEmpty) {
+          return validatorText;
+        }
+
+        if (keyboardType == TextInputType.number) {
+          final parsed = double.tryParse(value.replaceAll(',', '.'));
+
+          if (parsed == null) {
+            return 'Inserisci un numero valido';
+          }
+
+          if (parsed <= 0) {
+            return 'Inserisci un importo maggiore di zero';
+          }
+        }
+
+        return null;
+      },
+    );
+  }
+}
+
+class _DateButton extends StatelessWidget {
+  final String label;
+  final DateTime date;
+  final VoidCallback onTap;
+
+  const _DateButton({
+    required this.label,
+    required this.date,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final formattedDate = DateFormat('dd/MM/yyyy', 'it_IT').format(date);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          border: OutlineInputBorder(),
+          suffixIcon: Icon(Icons.calendar_month_rounded),
+        ).copyWith(
+          labelText: label,
+        ),
+        child: Text(formattedDate),
       ),
     );
   }

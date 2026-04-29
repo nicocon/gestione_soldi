@@ -52,26 +52,19 @@ class _AuthPageState extends State<AuthPage> {
     try {
       if (_isLogin) {
         await _authService.login(
-          email: _emailController.text,
+          email: _emailController.text.trim(),
           password: _passwordController.text,
         );
       } else {
         await _authService.register(
-          name: _nameController.text,
-          email: _emailController.text,
+          name: _nameController.text.trim(),
+          email: _emailController.text.trim(),
           password: _passwordController.text,
         );
       }
 
       if (!mounted) return;
 
-      /*
-        Dopo login/registrazione:
-        - chiudiamo AuthPage
-        - torniamo alla prima route
-        - AuthWrapper rileva FirebaseAuth aggiornato
-        - mostra automaticamente DashboardPage
-      */
       Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (!mounted) return;
@@ -116,19 +109,20 @@ class _AuthPageState extends State<AuthPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    Icons.account_balance_wallet_rounded,
-                    size: 56,
-                    color: Color(0xFF1E88E5),
+                  Image.asset(
+                    'assets/images/pocketplan_logo_mini.png',
+                    width: 190,
+                    fit: BoxFit.contain,
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
 
                   Text(
                     title,
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
+                      color: Color(0xFF071F4F),
                     ),
                   ),
 
@@ -141,6 +135,7 @@ class _AuthPageState extends State<AuthPage> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.black54,
+                      fontSize: 15,
                     ),
                   ),
 
@@ -149,9 +144,11 @@ class _AuthPageState extends State<AuthPage> {
                   if (!_isLogin) ...[
                     TextFormField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Nome',
-                        border: OutlineInputBorder(),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                       validator: (value) {
                         if (!_isLogin &&
@@ -167,9 +164,11 @@ class _AuthPageState extends State<AuthPage> {
 
                   TextFormField(
                     controller: _emailController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Email',
-                      border: OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     keyboardType: TextInputType.emailAddress,
                     validator: (value) {
@@ -189,9 +188,11 @@ class _AuthPageState extends State<AuthPage> {
 
                   TextFormField(
                     controller: _passwordController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Password',
-                      border: OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     obscureText: true,
                     validator: (value) {
@@ -212,7 +213,10 @@ class _AuthPageState extends State<AuthPage> {
                     Text(
                       _errorMessage!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ],
 
@@ -223,12 +227,25 @@ class _AuthPageState extends State<AuthPage> {
                     height: 52,
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1677F2),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       child: _isLoading
                           ? const SizedBox(
                               width: 22,
                               height: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
+                                color: Colors.white,
                               ),
                             )
                           : Text(title),
@@ -250,6 +267,10 @@ class _AuthPageState extends State<AuthPage> {
                       _isLogin
                           ? 'Non hai un account? Registrati'
                           : 'Hai già un account? Accedi',
+                      style: const TextStyle(
+                        color: Color(0xFF1677F2),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],

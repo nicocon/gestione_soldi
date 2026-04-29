@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 
 import '../services/auth_service.dart';
 import '../services/finance_service.dart';
-import 'expenses_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -84,15 +83,6 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  void _openExpensesPage() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const ExpensesPage(),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final user = _authService.currentUser;
@@ -115,16 +105,6 @@ class _DashboardPageState extends State<DashboardPage> {
         centerTitle: false,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
-        actions: [
-          IconButton(
-            tooltip: 'Esci',
-            onPressed: () async {
-              await _authService.logout();
-            },
-            icon: const Icon(Icons.logout),
-          ),
-          const SizedBox(width: 12),
-        ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
@@ -168,7 +148,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 _HeaderSection(
-                                  name: name,
+                                  name: name.toString(),
                                   onAddIncome: _showAddIncomeDialog,
                                   onAddExpense: _showAddExpenseDialog,
                                   onAddGoal: _showAddGoalDialog,
@@ -195,8 +175,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                       subtitle: 'Totale spese del mese',
                                     ),
                                     _SummaryCard(
-                                      icon: Icons
-                                          .account_balance_wallet_rounded,
+                                      icon: Icons.account_balance_wallet_rounded,
                                       title: 'Saldo previsto',
                                       value: _currencyFormatter.format(balance),
                                       subtitle: balance >= 0
@@ -227,7 +206,6 @@ class _DashboardPageState extends State<DashboardPage> {
                                               currencyFormatter:
                                                   _currencyFormatter,
                                               dateFormatter: _dateFormatter,
-                                              onViewAll: _openExpensesPage,
                                             ),
                                           ),
                                           const SizedBox(width: 18),
@@ -250,7 +228,6 @@ class _DashboardPageState extends State<DashboardPage> {
                                           currencyFormatter:
                                               _currencyFormatter,
                                           dateFormatter: _dateFormatter,
-                                          onViewAll: _openExpensesPage,
                                         ),
                                         const SizedBox(height: 18),
                                         _GoalsList(
@@ -431,13 +408,11 @@ class _ExpensesList extends StatelessWidget {
   final QuerySnapshot<Map<String, dynamic>>? snapshot;
   final NumberFormat currencyFormatter;
   final DateFormat dateFormatter;
-  final VoidCallback onViewAll;
 
   const _ExpensesList({
     required this.snapshot,
     required this.currencyFormatter,
     required this.dateFormatter,
-    required this.onViewAll,
   });
 
   @override
@@ -447,7 +422,6 @@ class _ExpensesList extends StatelessWidget {
     return _Panel(
       title: 'Ultime spese',
       icon: Icons.receipt_long_rounded,
-      onViewAll: onViewAll,
       child: docs.isEmpty
           ? const _EmptyState(text: 'Nessuna spesa inserita.')
           : Column(
@@ -456,7 +430,14 @@ class _ExpensesList extends StatelessWidget {
 
                 final title = data['title'] ?? 'Spesa';
                 final category = data['category'] ?? 'Generale';
-                final amount = (data['amount'] ?? 0).toDouble();
+
+                final rawAmount = data['amount'];
+                final amount = rawAmount is int
+                    ? rawAmount.toDouble()
+                    : rawAmount is double
+                        ? rawAmount
+                        : 0.0;
+
                 final isPaid = data['is_paid'] == true;
                 final reminderEnabled = data['reminder_enabled'] == true;
 
@@ -466,9 +447,9 @@ class _ExpensesList extends StatelessWidget {
                     : 'N/D';
 
                 return _ListRow(
-                  title: title,
+                  title: title.toString(),
                   subtitle:
-                      '$category • Scadenza $dueDate • ${isPaid ? 'Pagata' : 'Da pagare'}${reminderEnabled ? ' • Promemoria attivo' : ''}',
+                      '${category.toString()} • Scadenza $dueDate • ${isPaid ? 'Pagata' : 'Da pagare'}${reminderEnabled ? ' • Promemoria attivo' : ''}',
                   trailing: currencyFormatter.format(amount),
                 );
               }).toList(),
@@ -502,8 +483,20 @@ class _GoalsList extends StatelessWidget {
                 final data = doc.data();
 
                 final title = data['title'] ?? 'Obiettivo';
-                final target = (data['target_amount'] ?? 0).toDouble();
-                final current = (data['current_amount'] ?? 0).toDouble();
+
+                final rawTarget = data['target_amount'];
+                final target = rawTarget is int
+                    ? rawTarget.toDouble()
+                    : rawTarget is double
+                        ? rawTarget
+                        : 0.0;
+
+                final rawCurrent = data['current_amount'];
+                final current = rawCurrent is int
+                    ? rawCurrent.toDouble()
+                    : rawCurrent is double
+                        ? rawCurrent
+                        : 0.0;
 
                 final deadlineRaw = data['deadline'];
                 final deadline = deadlineRaw is Timestamp
@@ -519,7 +512,7 @@ class _GoalsList extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _ListRow(
-                        title: title,
+                        title: title.toString(),
                         subtitle:
                             '${currencyFormatter.format(current)} / ${currencyFormatter.format(target)} • Scadenza $deadline',
                         trailing: '${(progress * 100).toStringAsFixed(0)}%',
@@ -539,13 +532,11 @@ class _Panel extends StatelessWidget {
   final String title;
   final IconData icon;
   final Widget child;
-  final VoidCallback? onViewAll;
 
   const _Panel({
     required this.title,
     required this.icon,
     required this.child,
-    this.onViewAll,
   });
 
   @override
@@ -574,11 +565,6 @@ class _Panel extends StatelessWidget {
                   ),
                 ),
               ),
-              if (onViewAll != null)
-                TextButton(
-                  onPressed: onViewAll,
-                  child: const Text('Vedi tutte'),
-                ),
             ],
           ),
           const SizedBox(height: 18),
@@ -721,7 +707,7 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
     );
 
     await widget.financeService.addIncome(
-      title: _titleController.text,
+      title: _titleController.text.trim(),
       amount: amount,
       date: _selectedDate,
     );
@@ -819,10 +805,10 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
     );
 
     await widget.financeService.addExpense(
-      title: _titleController.text,
+      title: _titleController.text.trim(),
       amount: amount,
       dueDate: _selectedDueDate,
-      category: _categoryController.text,
+      category: _categoryController.text.trim(),
       isPaid: _isPaid,
       reminderEnabled: _reminderEnabled,
     );
@@ -949,7 +935,7 @@ class _AddGoalDialogState extends State<_AddGoalDialog> {
     );
 
     await widget.financeService.addGoal(
-      title: _titleController.text,
+      title: _titleController.text.trim(),
       targetAmount: target,
       currentAmount: current,
       deadline: _selectedDeadline,
@@ -1073,6 +1059,10 @@ class _TextInput extends StatelessWidget {
 
           if (parsed == null) {
             return 'Inserisci un numero valido';
+          }
+
+          if (parsed < 0) {
+            return 'Inserisci un importo valido';
           }
         }
 

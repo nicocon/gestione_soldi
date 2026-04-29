@@ -72,6 +72,26 @@ class FinanceService {
     });
   }
 
+  Future<void> updateExpense({
+    required String expenseId,
+    required String title,
+    required double amount,
+    required DateTime dueDate,
+    required String category,
+    required bool isPaid,
+    required bool reminderEnabled,
+  }) async {
+    await expensesRef.doc(expenseId).update({
+      'title': title.trim(),
+      'amount': amount,
+      'due_date': Timestamp.fromDate(dueDate),
+      'category': category.trim(),
+      'is_paid': isPaid,
+      'reminder_enabled': reminderEnabled,
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+  }
+
   Future<void> updateExpensePaid({
     required String expenseId,
     required bool isPaid,

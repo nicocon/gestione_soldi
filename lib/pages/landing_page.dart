@@ -72,17 +72,13 @@ class _Navbar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.account_balance_wallet_rounded,
-            color: Color(0xFF1E88E5),
-            size: 32,
-          ),
-          const SizedBox(width: 10),
-          const Text(
-            'Gestione Soldi',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
+          SizedBox(
+            width: 320,
+            height: 64,
+            child: Image.asset(
+              'assets/images/pocketplan_logo.png',
+              fit: BoxFit.contain,
+              alignment: Alignment.centerLeft,
             ),
           ),
           const Spacer(),
@@ -119,6 +115,21 @@ class _HeroSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  width: 560,
+                  height: 170,
+                  alignment: Alignment.centerLeft,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F8FC),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Image.asset(
+                    'assets/images/pocketplan_logo_full.png',
+                    fit: BoxFit.contain,
+                    alignment: Alignment.centerLeft,
+                  ),
+                ),
+                const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
@@ -168,7 +179,7 @@ class _HeroSection extends StatelessWidget {
                     ),
                     const SizedBox(width: 16),
                     const Text(
-                      'Nessun conto bancario collegato.',
+                      'Nessun conto bancario da collegare.',
                       style: TextStyle(
                         color: Color(0xFF6B7280),
                         fontWeight: FontWeight.w600,
@@ -329,17 +340,20 @@ class _FeaturesSection extends StatelessWidget {
               _FeatureItem(
                 icon: Icons.calendar_month_rounded,
                 title: 'Scadenze e promemoria',
-                text: 'Inserisci bollette, rate e pagamenti. L’app ti avvisa prima della scadenza.',
+                text:
+                    'Inserisci bollette, rate e pagamenti. L’app ti avvisa prima della scadenza.',
               ),
               _FeatureItem(
                 icon: Icons.savings_rounded,
                 title: 'Obiettivi di risparmio',
-                text: 'Crea obiettivi come viaggio, PS5 o fondo emergenza e segui il progresso.',
+                text:
+                    'Crea obiettivi come viaggio, PS5 o fondo emergenza e segui il progresso.',
               ),
               _FeatureItem(
                 icon: Icons.auto_awesome_rounded,
                 title: 'AI Planner',
-                text: 'L’AI ti suggerisce quanto mettere da parte e come ricalcolare il piano.',
+                text:
+                    'L’AI ti suggerisce quanto mettere da parte e come ricalcolare il piano.',
               ),
             ],
           ),
@@ -431,7 +445,8 @@ class _HowItWorksSection extends StatelessWidget {
               _StepItem(
                 number: '1',
                 title: 'Inserisci entrate e spese',
-                text: 'Aggiungi stipendio, spese fisse, spese extra e scadenze.',
+                text:
+                    'Aggiungi stipendio, spese fisse, spese extra e scadenze.',
               ),
               _StepItem(
                 number: '2',
@@ -441,7 +456,8 @@ class _HowItWorksSection extends StatelessWidget {
               _StepItem(
                 number: '3',
                 title: 'Lascia calcolare all’AI',
-                text: 'Ricevi un piano chiaro su quanto spendere e risparmiare.',
+                text:
+                    'Ricevi un piano chiaro su quanto spendere e risparmiare.',
               ),
             ],
           ),
@@ -531,7 +547,7 @@ class _FinalCtaSection extends StatelessWidget {
             ),
             SizedBox(height: 14),
             Text(
-              'Gestione Soldi ti aiuta a ricordare, pianificare e risparmiare senza calcoli complicati.',
+              'PocketPlan ti aiuta a ricordare, pianificare e risparmiare senza calcoli complicati.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Color(0xFFD7DEE9),
