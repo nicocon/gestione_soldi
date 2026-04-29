@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "342056390141",
+    "project_id": "gestione-soldi-33c01",
+    "storage_bucket": "gestione-soldi-33c01.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:342056390141:android:a932a4c729f31088799d94",
+        "android_client_info": {
+          "package_name": "com.example.gestionale_soldi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbvfzYpJ7DZ7oVRaoN_Lwz7UsObQZ3YB4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
