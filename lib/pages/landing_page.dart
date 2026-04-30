@@ -29,6 +29,7 @@ class LandingPage extends StatelessWidget {
             ),
             Expanded(
               child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
                 child: Column(
                   children: [
                     _HeroSection(
@@ -59,9 +60,14 @@ class _Navbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
     return Container(
-      height: 76,
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      height: isMobile ? 68 : 76,
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 16 : 32,
+      ),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -73,8 +79,8 @@ class _Navbar extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 320,
-            height: 64,
+            width: isMobile ? 155 : 320,
+            height: isMobile ? 48 : 64,
             child: Image.asset(
               'assets/images/pocketplan_logo.png',
               fit: BoxFit.contain,
@@ -82,14 +88,40 @@ class _Navbar extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          TextButton(
-            onPressed: onLogin,
-            child: const Text('Accedi'),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: onRegister,
-            child: const Text('Registrati'),
+          if (!isMobile) ...[
+            TextButton(
+              onPressed: onLogin,
+              child: const Text(
+                'Accedi',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
+          SizedBox(
+            height: isMobile ? 40 : 44,
+            child: ElevatedButton(
+              onPressed: isMobile ? onLogin : onRegister,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1677F2),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 16 : 22,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              child: Text(
+                isMobile ? 'Accedi' : 'Registrati',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -106,131 +138,235 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return Container(
-      constraints: const BoxConstraints(maxWidth: 1180),
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 72),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 560,
-                  height: 170,
-                  alignment: Alignment.centerLeft,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF5F8FC),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Image.asset(
-                    'assets/images/pocketplan_logo_full.png',
-                    fit: BoxFit.contain,
-                    alignment: Alignment.centerLeft,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE3F2FD),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'Il tuo piano mensile, gestito con AI',
-                    style: TextStyle(
-                      color: Color(0xFF1565C0),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Gestisci entrate, spese e obiettivi senza stress.',
-                  style: TextStyle(
-                    fontSize: 52,
-                    height: 1.08,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
-                  ),
-                ),
-                const SizedBox(height: 22),
-                const Text(
-                  'Tieni sotto controllo le scadenze, organizza il budget mensile e lascia che l’AI ti aiuti a capire quanto puoi spendere, risparmiare o mettere da parte per i tuoi obiettivi.',
-                  style: TextStyle(
-                    fontSize: 18,
-                    height: 1.6,
-                    color: Color(0xFF5B6475),
-                  ),
-                ),
-                const SizedBox(height: 32),
-                Row(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 20 : 32,
+        vertical: isMobile ? 34 : 72,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: isMobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(
-                      height: 54,
-                      child: ElevatedButton.icon(
-                        onPressed: onStart,
-                        icon: const Icon(Icons.rocket_launch_rounded),
-                        label: const Text('Inizia gratis'),
+                    _HeroText(
+                      isMobile: true,
+                      onStart: onStart,
+                    ),
+                    const SizedBox(height: 28),
+                    const _MockPreviewCard(),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: _HeroText(
+                        isMobile: false,
+                        onStart: onStart,
                       ),
                     ),
-                    const SizedBox(width: 16),
-                    const Text(
-                      'Nessun conto bancario da collegare.',
-                      style: TextStyle(
-                        color: Color(0xFF6B7280),
-                        fontWeight: FontWeight.w600,
-                      ),
+                    const SizedBox(width: 56),
+                    const Expanded(
+                      child: _MockPreviewCard(),
                     ),
                   ],
                 ),
-              ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroText extends StatelessWidget {
+  final bool isMobile;
+  final VoidCallback onStart;
+
+  const _HeroText({
+    required this.isMobile,
+    required this.onStart,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment:
+          isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: isMobile ? 260 : 560,
+          height: isMobile ? 86 : 150,
+          child: Image.asset(
+            'assets/images/pocketplan_logo_full.png',
+            fit: BoxFit.contain,
+            alignment: isMobile ? Alignment.center : Alignment.centerLeft,
+          ),
+        ),
+        SizedBox(height: isMobile ? 12 : 18),
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 8,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE3F2FD),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: const Text(
+            'Il tuo piano mensile, gestito con AI',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFF1565C0),
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
             ),
           ),
-          const SizedBox(width: 56),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(28),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(32),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
-                    blurRadius: 30,
-                    offset: const Offset(0, 18),
+        ),
+        SizedBox(height: isMobile ? 20 : 24),
+        Text(
+          'Gestisci entrate, spese e obiettivi senza stress.',
+          textAlign: isMobile ? TextAlign.center : TextAlign.left,
+          style: TextStyle(
+            fontSize: isMobile ? 34 : 52,
+            height: 1.08,
+            fontWeight: FontWeight.w900,
+            color: const Color(0xFF172033),
+            letterSpacing: -0.8,
+          ),
+        ),
+        SizedBox(height: isMobile ? 18 : 22),
+        Text(
+          'Tieni sotto controllo le scadenze, organizza il budget mensile e lascia che l’AI ti aiuti a capire quanto puoi spendere, risparmiare o mettere da parte.',
+          textAlign: isMobile ? TextAlign.center : TextAlign.left,
+          style: TextStyle(
+            fontSize: isMobile ? 16 : 18,
+            height: 1.55,
+            color: const Color(0xFF5B6475),
+          ),
+        ),
+        SizedBox(height: isMobile ? 26 : 32),
+        if (isMobile)
+          Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton.icon(
+                  onPressed: onStart,
+                  icon: const Icon(Icons.rocket_launch_rounded),
+                  label: const Text('Inizia gratis'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1677F2),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ],
+                ),
               ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _MockCard(
-                    icon: Icons.payments_rounded,
-                    title: 'Saldo previsto',
-                    value: '€ 1.240,00',
-                    subtitle: 'Dopo spese e risparmi pianificati',
-                  ),
-                  SizedBox(height: 16),
-                  _MockCard(
-                    icon: Icons.flag_rounded,
-                    title: 'Obiettivo PS5',
-                    value: '€ 320 / € 550',
-                    subtitle: 'Mancano circa 3 mesi',
-                  ),
-                  SizedBox(height: 16),
-                  _MockCard(
-                    icon: Icons.notifications_active_rounded,
-                    title: 'Prossima scadenza',
-                    value: 'Bolletta luce - 12 Maggio',
-                    subtitle: 'Promemoria attivo via notifica/email',
-                  ),
-                ],
+              const SizedBox(height: 12),
+              const Text(
+                'Nessun conto bancario da collegare.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              SizedBox(
+                height: 54,
+                child: ElevatedButton.icon(
+                  onPressed: onStart,
+                  icon: const Icon(Icons.rocket_launch_rounded),
+                  label: const Text('Inizia gratis'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1677F2),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Text(
+                'Nessun conto bancario da collegare.',
+                style: TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _MockPreviewCard extends StatelessWidget {
+  const _MockPreviewCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 18 : 28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(isMobile ? 26 : 32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 30,
+            offset: const Offset(0, 18),
+          ),
+        ],
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MockCard(
+            icon: Icons.payments_rounded,
+            title: 'Saldo previsto',
+            value: '€ 1.240,00',
+            subtitle: 'Dopo spese e risparmi pianificati',
+          ),
+          SizedBox(height: 14),
+          _MockCard(
+            icon: Icons.flag_rounded,
+            title: 'Obiettivo PS5',
+            value: '€ 320 / € 550',
+            subtitle: 'Mancano circa 3 mesi',
+          ),
+          SizedBox(height: 14),
+          _MockCard(
+            icon: Icons.notifications_active_rounded,
+            title: 'Prossima scadenza',
+            value: 'Bolletta luce - 12 Maggio',
+            subtitle: 'Promemoria attivo via notifica/email',
           ),
         ],
       ),
@@ -253,8 +389,11 @@ class _MockCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: EdgeInsets.all(isMobile ? 16 : 22),
       decoration: BoxDecoration(
         color: const Color(0xFFF7FAFE),
         borderRadius: BorderRadius.circular(22),
@@ -265,8 +404,8 @@ class _MockCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 52,
-            height: 52,
+            width: isMobile ? 46 : 52,
+            height: isMobile ? 46 : 52,
             decoration: BoxDecoration(
               color: const Color(0xFFE3F2FD),
               borderRadius: BorderRadius.circular(18),
@@ -274,9 +413,10 @@ class _MockCard extends StatelessWidget {
             child: Icon(
               icon,
               color: const Color(0xFF1E88E5),
+              size: isMobile ? 23 : 26,
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -285,16 +425,17 @@ class _MockCard extends StatelessWidget {
                   title,
                   style: const TextStyle(
                     color: Color(0xFF6B7280),
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   value,
-                  style: const TextStyle(
-                    fontSize: 21,
+                  style: TextStyle(
+                    fontSize: isMobile ? 18 : 21,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
+                    color: const Color(0xFF172033),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -302,6 +443,8 @@ class _MockCard extends StatelessWidget {
                   subtitle,
                   style: const TextStyle(
                     color: Color(0xFF7C8798),
+                    fontSize: 13,
+                    height: 1.35,
                   ),
                 ),
               ],
@@ -318,46 +461,59 @@ class _FeaturesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return Container(
-      constraints: const BoxConstraints(maxWidth: 1180),
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-      child: const Column(
-        children: [
-          Text(
-            'Tutto quello che ti serve per gestire il mese',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 34,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
-            ),
-          ),
-          SizedBox(height: 28),
-          Wrap(
-            spacing: 18,
-            runSpacing: 18,
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 20 : 32,
+        vertical: isMobile ? 38 : 48,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: Column(
             children: [
-              _FeatureItem(
-                icon: Icons.calendar_month_rounded,
-                title: 'Scadenze e promemoria',
-                text:
-                    'Inserisci bollette, rate e pagamenti. L’app ti avvisa prima della scadenza.',
+              Text(
+                'Tutto quello che ti serve per gestire il mese',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: isMobile ? 27 : 34,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF172033),
+                ),
               ),
-              _FeatureItem(
-                icon: Icons.savings_rounded,
-                title: 'Obiettivi di risparmio',
-                text:
-                    'Crea obiettivi come viaggio, PS5 o fondo emergenza e segui il progresso.',
-              ),
-              _FeatureItem(
-                icon: Icons.auto_awesome_rounded,
-                title: 'AI Planner',
-                text:
-                    'L’AI ti suggerisce quanto mettere da parte e come ricalcolare il piano.',
+              SizedBox(height: isMobile ? 22 : 28),
+              Wrap(
+                spacing: 18,
+                runSpacing: 18,
+                alignment: WrapAlignment.center,
+                children: const [
+                  _FeatureItem(
+                    icon: Icons.calendar_month_rounded,
+                    title: 'Scadenze e promemoria',
+                    text:
+                        'Inserisci bollette, rate e pagamenti. L’app ti avvisa prima della scadenza.',
+                  ),
+                  _FeatureItem(
+                    icon: Icons.savings_rounded,
+                    title: 'Obiettivi di risparmio',
+                    text:
+                        'Crea obiettivi come viaggio, PS5 o fondo emergenza e segui il progresso.',
+                  ),
+                  _FeatureItem(
+                    icon: Icons.auto_awesome_rounded,
+                    title: 'AI Planner',
+                    text:
+                        'L’AI ti suggerisce quanto mettere da parte e come ricalcolare il piano.',
+                  ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -376,10 +532,13 @@ class _FeatureItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return SizedBox(
-      width: 360,
+      width: isMobile ? double.infinity : 360,
       child: Container(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(isMobile ? 20 : 24),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(26),
@@ -388,24 +547,36 @@ class _FeatureItem extends StatelessWidget {
           ),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+              isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
           children: [
-            Icon(
-              icon,
-              color: const Color(0xFF1E88E5),
-              size: 34,
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE3F2FD),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFF1E88E5),
+                size: 30,
+              ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             Text(
               title,
+              textAlign: isMobile ? TextAlign.center : TextAlign.left,
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
+                color: Color(0xFF172033),
               ),
             ),
             const SizedBox(height: 10),
             Text(
               text,
+              textAlign: isMobile ? TextAlign.center : TextAlign.left,
               style: const TextStyle(
                 height: 1.5,
                 color: Color(0xFF6B7280),
@@ -423,45 +594,58 @@ class _HowItWorksSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return Container(
       color: Colors.white,
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 64),
-      child: const Column(
-        children: [
-          Text(
-            'Come funziona',
-            style: TextStyle(
-              fontSize: 34,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
-            ),
-          ),
-          SizedBox(height: 28),
-          Wrap(
-            spacing: 18,
-            runSpacing: 18,
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 20 : 32,
+        vertical: isMobile ? 46 : 64,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: Column(
             children: [
-              _StepItem(
-                number: '1',
-                title: 'Inserisci entrate e spese',
-                text:
-                    'Aggiungi stipendio, spese fisse, spese extra e scadenze.',
+              Text(
+                'Come funziona',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: isMobile ? 28 : 34,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF172033),
+                ),
               ),
-              _StepItem(
-                number: '2',
-                title: 'Crea i tuoi obiettivi',
-                text: 'Scegli cosa vuoi raggiungere, importo e data limite.',
-              ),
-              _StepItem(
-                number: '3',
-                title: 'Lascia calcolare all’AI',
-                text:
-                    'Ricevi un piano chiaro su quanto spendere e risparmiare.',
+              SizedBox(height: isMobile ? 24 : 28),
+              Wrap(
+                spacing: 18,
+                runSpacing: 22,
+                alignment: WrapAlignment.center,
+                children: const [
+                  _StepItem(
+                    number: '1',
+                    title: 'Inserisci entrate e spese',
+                    text:
+                        'Aggiungi stipendio, spese fisse, spese extra e scadenze.',
+                  ),
+                  _StepItem(
+                    number: '2',
+                    title: 'Crea i tuoi obiettivi',
+                    text: 'Scegli cosa vuoi raggiungere, importo e data limite.',
+                  ),
+                  _StepItem(
+                    number: '3',
+                    title: 'Lascia calcolare all’AI',
+                    text:
+                        'Ricevi un piano chiaro su quanto spendere e risparmiare.',
+                  ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -480,41 +664,60 @@ class _StepItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return SizedBox(
-      width: 340,
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 26,
-            backgroundColor: Color(0xFF1E88E5),
-            child: Text(
-              number,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 20,
+      width: isMobile ? double.infinity : 340,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 18 : 10,
+          vertical: isMobile ? 18 : 0,
+        ),
+        decoration: BoxDecoration(
+          color: isMobile ? const Color(0xFFF7FAFE) : Colors.transparent,
+          borderRadius: BorderRadius.circular(22),
+          border: isMobile
+              ? Border.all(
+                  color: const Color(0xFFE5ECF5),
+                )
+              : null,
+        ),
+        child: Column(
+          children: [
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: const Color(0xFF1E88E5),
+              child: Text(
+                number,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                ),
               ),
             ),
-          ),
-          SizedBox(height: 16),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF172033),
+              ),
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF6B7280),
-              height: 1.5,
+            const SizedBox(height: 8),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF6B7280),
+                height: 1.5,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -525,36 +728,48 @@ class _FinalCtaSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 800;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 56),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 980),
-        padding: const EdgeInsets.all(38),
-        decoration: BoxDecoration(
-          color: const Color(0xFF172033),
-          borderRadius: BorderRadius.circular(32),
-        ),
-        child: const Column(
-          children: [
-            Text(
-              'Il modo più semplice per non perdere il controllo del mese.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.w900,
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 20 : 32,
+        vertical: isMobile ? 42 : 56,
+      ),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 980),
+          width: double.infinity,
+          padding: EdgeInsets.all(isMobile ? 26 : 38),
+          decoration: BoxDecoration(
+            color: const Color(0xFF172033),
+            borderRadius: BorderRadius.circular(isMobile ? 26 : 32),
+          ),
+          child: Column(
+            children: [
+              Text(
+                'Il modo più semplice per non perdere il controllo del mese.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: isMobile ? 25 : 30,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-            ),
-            SizedBox(height: 14),
-            Text(
-              'PocketPlan ti aiuta a ricordare, pianificare e risparmiare senza calcoli complicati.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Color(0xFFD7DEE9),
-                fontSize: 17,
+              const SizedBox(height: 14),
+              const Text(
+                'PocketPlan ti aiuta a ricordare, pianificare e risparmiare senza calcoli complicati.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFFD7DEE9),
+                  fontSize: 16,
+                  height: 1.5,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
