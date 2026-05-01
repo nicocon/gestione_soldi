@@ -1,6 +1,6 @@
 {
-    "name": "gestionale_soldi",
-    "short_name": "gestionale_soldi",
+    "name": "PocketPlan",
+    "short_name": "PocketPlan",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

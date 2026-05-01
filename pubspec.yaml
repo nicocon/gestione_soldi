@@ -42,6 +42,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.14.3
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -49,6 +50,12 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+flutter_launcher_icons:
+  ios: true
+  android: true
+  image_path: "assets/icons/pocketplan_icon.png"
+  remove_alpha_ios: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -65,6 +72,8 @@ flutter:
     - assets/images/pocketplan_logo.png
     - assets/images/pocketplan_logo_full.png
     - assets/images/pocketplan_logo_mini.png
+    - assets/images/pocketplan_logo_light.png
+    - assets/images/pocketplan_logo_dark.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

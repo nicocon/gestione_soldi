@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../pages/dashboard_page.dart';
 import '../pages/expenses_page.dart';
+import '../pages/incomes_page.dart';
 import '../services/auth_service.dart';
 
 class AppShell extends StatefulWidget {
@@ -30,11 +31,7 @@ class _AppShellState extends State<AppShell> {
     const _AppNavItem(
       label: 'Entrate',
       icon: Icons.trending_up_rounded,
-      page: _PlaceholderPage(
-        title: 'Entrate',
-        icon: Icons.trending_up_rounded,
-        description: 'Qui gestiremo tutte le entrate, ricorrenti ed extra.',
-      ),
+      page: IncomesPage(),
     ),
     const _AppNavItem(
       label: 'Obiettivi',
@@ -95,15 +92,21 @@ class _AppShellState extends State<AppShell> {
                 selectedItem.label,
                 style: const TextStyle(
                   fontWeight: FontWeight.w900,
+                  color: Color(0xFF172033),
                 ),
               ),
+              centerTitle: false,
               backgroundColor: Colors.white,
               surfaceTintColor: Colors.white,
+              elevation: 0,
               actions: [
                 IconButton(
                   tooltip: 'Esci',
                   onPressed: _logout,
-                  icon: const Icon(Icons.logout_rounded),
+                  icon: const Icon(
+                    Icons.logout_rounded,
+                    color: Color(0xFF172033),
+                  ),
                 ),
               ],
             ),
@@ -355,23 +358,215 @@ class _MobileBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visibleItems = items.take(5).toList();
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return NavigationBar(
-      selectedIndex: selectedIndex > 4 ? 0 : selectedIndex,
-      onDestinationSelected: onSelect,
-      backgroundColor: Colors.white,
-      indicatorColor: const Color(0xFFE3F2FD),
-      destinations: visibleItems.map((item) {
-        return NavigationDestination(
-          icon: Icon(item.icon),
-          selectedIcon: Icon(
-            item.icon,
-            color: const Color(0xFF1565C0),
+    final dashboard = items[0];
+    final expenses = items[1];
+    final incomes = items[2];
+    final goals = items[3];
+    final aiPlanner = items[4];
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        14,
+        8,
+        14,
+        bottomPadding > 0 ? bottomPadding : 12,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(
+          top: BorderSide(
+            color: Color(0xFFE5ECF5),
           ),
-          label: item.label,
-        );
-      }).toList(),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 24,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        height: 92,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: _MobileNavItem(
+                item: expenses,
+                selected: selectedIndex == 1,
+                onTap: () => onSelect(1),
+              ),
+            ),
+            Expanded(
+              child: _MobileNavItem(
+                item: incomes,
+                selected: selectedIndex == 2,
+                onTap: () => onSelect(2),
+              ),
+            ),
+            Expanded(
+              child: _MobileDashboardButton(
+                item: dashboard,
+                selected: selectedIndex == 0,
+                onTap: () => onSelect(0),
+              ),
+            ),
+            Expanded(
+              child: _MobileNavItem(
+                item: goals,
+                selected: selectedIndex == 3,
+                onTap: () => onSelect(3),
+              ),
+            ),
+            Expanded(
+              child: _MobileNavItem(
+                item: aiPlanner,
+                selected: selectedIndex == 4,
+                onTap: () => onSelect(4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileNavItem extends StatelessWidget {
+  final _AppNavItem item;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MobileNavItem({
+    required this.item,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? const Color(0xFF1565C0) : const Color(0xFF94A3B8);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE3F2FD) : Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                item.icon,
+                color: color,
+                size: selected ? 25 : 23,
+              ),
+              const SizedBox(height: 5),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileDashboardButton extends StatelessWidget {
+  final _AppNavItem item;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MobileDashboardButton({
+    required this.item,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.translate(
+      offset: const Offset(0, -10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutBack,
+                width: selected ? 62 : 58,
+                height: selected ? 62 : 58,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF1E88E5),
+                      Color(0xFF1565C0),
+                    ],
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF1565C0).withValues(alpha: 0.35),
+                      blurRadius: selected ? 22 : 16,
+                      offset: const Offset(0, 9),
+                    ),
+                  ],
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 4,
+                  ),
+                ),
+                child: Icon(
+                  item.icon,
+                  color: Colors.white,
+                  size: selected ? 29 : 27,
+                ),
+              ),
+              const SizedBox(height: 3),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: Color(0xFF1565C0),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

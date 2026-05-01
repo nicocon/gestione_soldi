@@ -1,9 +1,17 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/auth_service.dart';
 import '../services/finance_service.dart';
+
+enum DashboardExpenseType {
+  standard,
+  planned,
+}
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -22,38 +30,291 @@ class _DashboardPageState extends State<DashboardPage> {
   );
 
   final DateFormat _dateFormatter = DateFormat('dd/MM/yyyy', 'it_IT');
+  final DateFormat _monthFormatter = DateFormat('MMMM yyyy', 'it_IT');
+  final DateFormat _shortMonthFormatter = DateFormat('MMM', 'it_IT');
 
-  bool _isCurrentMonth(Timestamp? timestamp) {
-    if (timestamp == null) return false;
+  double _amountFrom(dynamic value) {
+    if (value is int) return value.toDouble();
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
 
-    final date = timestamp.toDate();
-    final now = DateTime.now();
-
-    return date.year == now.year && date.month == now.month;
+    return 0;
   }
 
-  double _sumCurrentMonth(
-    QuerySnapshot<Map<String, dynamic>> snapshot,
-    String dateField,
+  bool _sameMonth(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month;
+  }
+
+  DateTime get _currentMonth {
+    final now = DateTime.now();
+
+    return DateTime(now.year, now.month);
+  }
+
+  DateTime get _previousMonth {
+    final now = DateTime.now();
+
+    return DateTime(now.year, now.month - 1);
+  }
+
+  List<DateTime> _lastMonths({
+    int count = 6,
+  }) {
+    final now = _currentMonth;
+
+    return List.generate(count, (index) {
+      final diff = count - 1 - index;
+
+      return DateTime(now.year, now.month - diff);
+    });
+  }
+
+  bool _isPlannedExpense(Map<String, dynamic> data) {
+    return data['type'] == 'planned';
+  }
+
+  List<Map<String, dynamic>> _splitItemsFrom(dynamic value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }
+
+    return [];
+  }
+
+  double _sumIncomesForMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
   ) {
+    if (snapshot == null) return 0;
+
     double total = 0;
 
     for (final doc in snapshot.docs) {
       final data = doc.data();
-      final timestamp = data[dateField];
+      final rawDate = data['date'];
 
-      if (timestamp is Timestamp && _isCurrentMonth(timestamp)) {
-        final amount = data['amount'];
+      if (rawDate is! Timestamp) continue;
 
-        if (amount is int) {
-          total += amount.toDouble();
-        } else if (amount is double) {
-          total += amount;
-        }
+      final date = rawDate.toDate();
+
+      if (_sameMonth(date, month)) {
+        total += _amountFrom(data['amount']);
       }
     }
 
     return total;
+  }
+
+  double _sumExpensesForMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
+  ) {
+    if (snapshot == null) return 0;
+
+    double total = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      if (_isPlannedExpense(data)) {
+        final splitItems = _splitItemsFrom(data['split_items']);
+
+        for (final item in splitItems) {
+          final rawPaidAt = item['paid_at'];
+
+          if (rawPaidAt is! Timestamp) continue;
+
+          final paidAt = rawPaidAt.toDate();
+
+          if (_sameMonth(paidAt, month)) {
+            total += _amountFrom(item['amount']);
+          }
+        }
+
+        continue;
+      }
+
+      final rawDueDate = data['due_date'];
+
+      if (rawDueDate is! Timestamp) continue;
+
+      final dueDate = rawDueDate.toDate();
+
+      if (_sameMonth(dueDate, month)) {
+        total += _amountFrom(data['amount']);
+      }
+    }
+
+    return total;
+  }
+
+  double _sumPlannedBudgetExpectedForMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
+  ) {
+    if (snapshot == null) return 0;
+
+    double total = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      if (!_isPlannedExpense(data)) continue;
+
+      final rawMonth = data['month'];
+
+      if (rawMonth is! Timestamp) continue;
+
+      final budgetMonth = rawMonth.toDate();
+
+      if (_sameMonth(budgetMonth, month)) {
+        total += _amountFrom(data['amount']);
+      }
+    }
+
+    return total;
+  }
+
+  int _countMonthlyExpenses(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
+  ) {
+    if (snapshot == null) return 0;
+
+    int count = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      if (_isPlannedExpense(data)) {
+        final splitItems = _splitItemsFrom(data['split_items']);
+
+        for (final item in splitItems) {
+          final rawPaidAt = item['paid_at'];
+
+          if (rawPaidAt is! Timestamp) continue;
+
+          if (_sameMonth(rawPaidAt.toDate(), month)) {
+            count++;
+          }
+        }
+
+        continue;
+      }
+
+      final rawDueDate = data['due_date'];
+
+      if (rawDueDate is Timestamp && _sameMonth(rawDueDate.toDate(), month)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  List<_MonthlySummaryItem> _monthlySummaries(
+    QuerySnapshot<Map<String, dynamic>>? incomesSnapshot,
+    QuerySnapshot<Map<String, dynamic>>? expensesSnapshot,
+    List<DateTime> months,
+  ) {
+    return months.map((month) {
+      final incomes = _sumIncomesForMonth(incomesSnapshot, month);
+      final expenses = _sumExpensesForMonth(expensesSnapshot, month);
+
+      return _MonthlySummaryItem(
+        month: month,
+        monthLabel: _monthFormatter.format(month),
+        shortMonthLabel: _shortMonthFormatter.format(month),
+        incomes: incomes,
+        expenses: expenses,
+        balance: incomes - expenses,
+      );
+    }).toList();
+  }
+
+  double _averagePastExpenses(List<_MonthlySummaryItem> summaries) {
+    if (summaries.length <= 1) return 0;
+
+    final pastMonths = summaries.take(summaries.length - 1).toList();
+
+    if (pastMonths.isEmpty) return 0;
+
+    final total = pastMonths.fold<double>(
+      0,
+      (sum, item) => sum + item.expenses,
+    );
+
+    return total / pastMonths.length;
+  }
+
+  List<_ExpensePreviewItem> _expensePreviewItemsForCurrentMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+  ) {
+    if (snapshot == null) return [];
+
+    final List<_ExpensePreviewItem> items = [];
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      final title = (data['title'] ?? 'Spesa').toString();
+      final category = (data['category'] ?? 'Generale').toString();
+
+      if (_isPlannedExpense(data)) {
+        final splitItems = _splitItemsFrom(data['split_items']);
+
+        for (final item in splitItems) {
+          final rawPaidAt = item['paid_at'];
+
+          if (rawPaidAt is! Timestamp) continue;
+
+          final paidAt = rawPaidAt.toDate();
+
+          if (!_sameMonth(paidAt, _currentMonth)) continue;
+
+          final itemTitle = (item['title'] ?? '').toString().trim();
+
+          items.add(
+            _ExpensePreviewItem(
+              title: itemTitle.isEmpty ? title : itemTitle,
+              subtitle: '$title • Budget mensile',
+              amount: _amountFrom(item['amount']),
+              date: paidAt,
+              isPlanned: true,
+            ),
+          );
+        }
+
+        continue;
+      }
+
+      final rawDueDate = data['due_date'];
+
+      if (rawDueDate is! Timestamp) continue;
+
+      final dueDate = rawDueDate.toDate();
+
+      if (!_sameMonth(dueDate, _currentMonth)) continue;
+
+      final isPaid = data['is_paid'] == true;
+
+      items.add(
+        _ExpensePreviewItem(
+          title: title,
+          subtitle: '$category • ${isPaid ? 'Pagata' : 'Da pagare'}',
+          amount: _amountFrom(data['amount']),
+          date: dueDate,
+          isPlanned: false,
+        ),
+      );
+    }
+
+    items.sort((a, b) => b.date.compareTo(a.date));
+
+    return items.take(6).toList();
   }
 
   Future<void> _showAddIncomeDialog() async {
@@ -106,7 +367,7 @@ class _DashboardPageState extends State<DashboardPage> {
           borderRadius: BorderRadius.circular(28),
         ),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
+          constraints: const BoxConstraints(maxWidth: 500),
           child: child,
         ),
       ),
@@ -149,20 +410,75 @@ class _DashboardPageState extends State<DashboardPage> {
                       final expensesDocs = expensesSnapshot.data;
                       final goalsDocs = goalsSnapshot.data;
 
-                      final totalIncomes = incomesDocs == null
-                          ? 0.0
-                          : _sumCurrentMonth(incomesDocs, 'date');
+                      final currentMonth = _currentMonth;
+                      final previousMonth = _previousMonth;
 
-                      final totalExpenses = expensesDocs == null
-                          ? 0.0
-                          : _sumCurrentMonth(expensesDocs, 'due_date');
+                      final months = _lastMonths(count: 6);
 
-                      final balance = totalIncomes - totalExpenses;
+                      final monthlySummaries = _monthlySummaries(
+                        incomesDocs,
+                        expensesDocs,
+                        months,
+                      );
+
+                      final currentMonthIncomes = _sumIncomesForMonth(
+                        incomesDocs,
+                        currentMonth,
+                      );
+
+                      final previousMonthIncomes = _sumIncomesForMonth(
+                        incomesDocs,
+                        previousMonth,
+                      );
+
+                      final currentMonthExpenses = _sumExpensesForMonth(
+                        expensesDocs,
+                        currentMonth,
+                      );
+
+                      final previousMonthExpenses = _sumExpensesForMonth(
+                        expensesDocs,
+                        previousMonth,
+                      );
+
+                      final averagePastExpenses =
+                          _averagePastExpenses(monthlySummaries);
+
+                      final currentMonthBudgetExpected =
+                          _sumPlannedBudgetExpectedForMonth(
+                        expensesDocs,
+                        currentMonth,
+                      );
+
+                      final currentMonthBalance =
+                          currentMonthIncomes - currentMonthExpenses;
+
+                      final previousMonthBalance =
+                          previousMonthIncomes - previousMonthExpenses;
+
+                      final expensesDifference =
+                          currentMonthExpenses - previousMonthExpenses;
+
+                      final expensesDifferencePercent =
+                          previousMonthExpenses <= 0
+                              ? null
+                              : (expensesDifference / previousMonthExpenses) *
+                                  100;
+
                       final activeGoals = goalsDocs?.docs.length ?? 0;
+
+                      final expenseCountCurrentMonth = _countMonthlyExpenses(
+                        expensesDocs,
+                        currentMonth,
+                      );
+
+                      final currentMonthExpenseItems =
+                          _expensePreviewItemsForCurrentMonth(expensesDocs);
 
                       return LayoutBuilder(
                         builder: (context, constraints) {
                           final isMobile = constraints.maxWidth < 700;
+                          final isWide = constraints.maxWidth >= 950;
 
                           return SingleChildScrollView(
                             physics: const BouncingScrollPhysics(),
@@ -181,27 +497,61 @@ class _DashboardPageState extends State<DashboardPage> {
                                   children: [
                                     _HeaderSection(
                                       name: name.toString(),
+                                      currentMonthLabel:
+                                          _monthFormatter.format(currentMonth),
                                       onAddIncome: _showAddIncomeDialog,
                                       onAddExpense: _showAddExpenseDialog,
                                       onAddGoal: _showAddGoalDialog,
                                     ),
                                     SizedBox(height: isMobile ? 18 : 24),
+                                    _MonthlyInsightCard(
+                                      currentMonthLabel:
+                                          _monthFormatter.format(currentMonth),
+                                      previousMonthLabel:
+                                          _monthFormatter.format(previousMonth),
+                                      currentMonthExpenses:
+                                          currentMonthExpenses,
+                                      previousMonthExpenses:
+                                          previousMonthExpenses,
+                                      averagePastExpenses: averagePastExpenses,
+                                      expensesDifference: expensesDifference,
+                                      expensesDifferencePercent:
+                                          expensesDifferencePercent,
+                                      currentMonthBalance:
+                                          currentMonthBalance,
+                                      previousMonthBalance:
+                                          previousMonthBalance,
+                                      currentMonthBudgetExpected:
+                                          currentMonthBudgetExpected,
+                                      currencyFormatter: _currencyFormatter,
+                                    ),
+                                    SizedBox(height: isMobile ? 18 : 24),
                                     _SummaryGrid(
-                                      totalIncomes: totalIncomes,
-                                      totalExpenses: totalExpenses,
-                                      balance: balance,
+                                      currentMonthIncomes: currentMonthIncomes,
+                                      currentMonthExpenses:
+                                          currentMonthExpenses,
+                                      currentMonthBalance:
+                                          currentMonthBalance,
                                       activeGoals: activeGoals,
+                                      expenseCountCurrentMonth:
+                                          expenseCountCurrentMonth,
                                       currencyFormatter: _currencyFormatter,
                                     ),
                                     SizedBox(height: isMobile ? 20 : 28),
-                                    if (constraints.maxWidth >= 900)
+                                    _MonthlyTrendChart(
+                                      summaries: monthlySummaries,
+                                      currencyFormatter: _currencyFormatter,
+                                    ),
+                                    SizedBox(height: isMobile ? 20 : 28),
+                                    if (isWide)
                                       Row(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
                                           Expanded(
                                             child: _ExpensesList(
-                                              snapshot: expensesDocs,
+                                              items:
+                                                  currentMonthExpenseItems,
                                               currencyFormatter:
                                                   _currencyFormatter,
                                               dateFormatter: _dateFormatter,
@@ -222,7 +572,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                       Column(
                                         children: [
                                           _ExpensesList(
-                                            snapshot: expensesDocs,
+                                            items: currentMonthExpenseItems,
                                             currencyFormatter:
                                                 _currencyFormatter,
                                             dateFormatter: _dateFormatter,
@@ -255,14 +605,50 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
+class _MonthlySummaryItem {
+  final DateTime month;
+  final String monthLabel;
+  final String shortMonthLabel;
+  final double incomes;
+  final double expenses;
+  final double balance;
+
+  const _MonthlySummaryItem({
+    required this.month,
+    required this.monthLabel,
+    required this.shortMonthLabel,
+    required this.incomes,
+    required this.expenses,
+    required this.balance,
+  });
+}
+
+class _ExpensePreviewItem {
+  final String title;
+  final String subtitle;
+  final double amount;
+  final DateTime date;
+  final bool isPlanned;
+
+  const _ExpensePreviewItem({
+    required this.title,
+    required this.subtitle,
+    required this.amount,
+    required this.date,
+    required this.isPlanned,
+  });
+}
+
 class _HeaderSection extends StatelessWidget {
   final String name;
+  final String currentMonthLabel;
   final VoidCallback onAddIncome;
   final VoidCallback onAddExpense;
   final VoidCallback onAddGoal;
 
   const _HeaderSection({
     required this.name,
+    required this.currentMonthLabel,
     required this.onAddIncome,
     required this.onAddExpense,
     required this.onAddGoal,
@@ -291,7 +677,11 @@ class _HeaderSection extends StatelessWidget {
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _HeaderText(name: name, isMobile: true),
+                _HeaderText(
+                  name: name,
+                  currentMonthLabel: currentMonthLabel,
+                  isMobile: true,
+                ),
                 const SizedBox(height: 20),
                 _HeaderActions(
                   onAddIncome: onAddIncome,
@@ -304,7 +694,11 @@ class _HeaderSection extends StatelessWidget {
           : Row(
               children: [
                 Expanded(
-                  child: _HeaderText(name: name, isMobile: false),
+                  child: _HeaderText(
+                    name: name,
+                    currentMonthLabel: currentMonthLabel,
+                    isMobile: false,
+                  ),
                 ),
                 const SizedBox(width: 20),
                 _HeaderActions(
@@ -321,10 +715,12 @@ class _HeaderSection extends StatelessWidget {
 
 class _HeaderText extends StatelessWidget {
   final String name;
+  final String currentMonthLabel;
   final bool isMobile;
 
   const _HeaderText({
     required this.name,
+    required this.currentMonthLabel,
     required this.isMobile,
   });
 
@@ -344,7 +740,7 @@ class _HeaderText extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'Ecco il riepilogo del tuo mese. Aggiungi entrate, spese e obiettivi per iniziare a costruire il tuo piano.',
+          'Riepilogo di ${currentMonthLabel.toUpperCase()}: controlla entrate, spese reali, budget consumati e andamento degli ultimi mesi.',
           style: TextStyle(
             color: const Color(0xFFD7DEE9),
             fontSize: isMobile ? 15 : 16,
@@ -470,18 +866,394 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+class _MonthlyInsightCard extends StatelessWidget {
+  final String currentMonthLabel;
+  final String previousMonthLabel;
+  final double currentMonthExpenses;
+  final double previousMonthExpenses;
+  final double averagePastExpenses;
+  final double expensesDifference;
+  final double? expensesDifferencePercent;
+  final double currentMonthBalance;
+  final double previousMonthBalance;
+  final double currentMonthBudgetExpected;
+  final NumberFormat currencyFormatter;
+
+  const _MonthlyInsightCard({
+    required this.currentMonthLabel,
+    required this.previousMonthLabel,
+    required this.currentMonthExpenses,
+    required this.previousMonthExpenses,
+    required this.averagePastExpenses,
+    required this.expensesDifference,
+    required this.expensesDifferencePercent,
+    required this.currentMonthBalance,
+    required this.previousMonthBalance,
+    required this.currentMonthBudgetExpected,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    final isSpendingMore = expensesDifference > 0;
+    final isSpendingLess = expensesDifference < 0;
+
+    final averageDifference = currentMonthExpenses - averagePastExpenses;
+
+    String comparisonText;
+
+    if (previousMonthExpenses <= 0 && currentMonthExpenses > 0) {
+      comparisonText =
+          'Questo mese hai iniziato a registrare spese. Nei prossimi mesi il confronto diventerà sempre più preciso.';
+    } else if (currentMonthExpenses <= 0 && previousMonthExpenses <= 0) {
+      comparisonText =
+          'Non ci sono ancora abbastanza spese registrate per creare un confronto utile.';
+    } else if (isSpendingMore) {
+      comparisonText =
+          'Stai spendendo ${currencyFormatter.format(expensesDifference)} in più rispetto a $previousMonthLabel.';
+    } else if (isSpendingLess) {
+      comparisonText =
+          'Stai spendendo ${currencyFormatter.format(expensesDifference.abs())} in meno rispetto a $previousMonthLabel.';
+    } else {
+      comparisonText =
+          'Le spese sono stabili rispetto a $previousMonthLabel.';
+    }
+
+    if (averagePastExpenses > 0) {
+      if (averageDifference > 0) {
+        comparisonText +=
+            ' Sei anche sopra la media degli ultimi mesi di ${currencyFormatter.format(averageDifference)}.';
+      } else if (averageDifference < 0) {
+        comparisonText +=
+            ' Sei sotto la media degli ultimi mesi di ${currencyFormatter.format(averageDifference.abs())}.';
+      } else {
+        comparisonText += ' Sei perfettamente in linea con la media recente.';
+      }
+    }
+
+    final percentText = expensesDifferencePercent == null
+        ? 'N/D'
+        : '${expensesDifferencePercent!.abs().toStringAsFixed(1)}%';
+
+    final balanceDifference = currentMonthBalance - previousMonthBalance;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 18 : 22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(
+          color: const Color(0xFFE5ECF5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: isMobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _InsightHeader(
+                  isSpendingMore: isSpendingMore,
+                  isSpendingLess: isSpendingLess,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  comparisonText,
+                  style: const TextStyle(
+                    color: Color(0xFF172033),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _InsightStats(
+                  currentMonthLabel: currentMonthLabel,
+                  previousMonthLabel: previousMonthLabel,
+                  currentMonthExpenses: currentMonthExpenses,
+                  previousMonthExpenses: previousMonthExpenses,
+                  averagePastExpenses: averagePastExpenses,
+                  percentText: percentText,
+                  balanceDifference: balanceDifference,
+                  currentMonthBudgetExpected: currentMonthBudgetExpected,
+                  currencyFormatter: currencyFormatter,
+                  isMobile: true,
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _InsightHeader(
+                        isSpendingMore: isSpendingMore,
+                        isSpendingLess: isSpendingLess,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        comparisonText,
+                        style: const TextStyle(
+                          color: Color(0xFF172033),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 24),
+                SizedBox(
+                  width: 460,
+                  child: _InsightStats(
+                    currentMonthLabel: currentMonthLabel,
+                    previousMonthLabel: previousMonthLabel,
+                    currentMonthExpenses: currentMonthExpenses,
+                    previousMonthExpenses: previousMonthExpenses,
+                    averagePastExpenses: averagePastExpenses,
+                    percentText: percentText,
+                    balanceDifference: balanceDifference,
+                    currentMonthBudgetExpected: currentMonthBudgetExpected,
+                    currencyFormatter: currencyFormatter,
+                    isMobile: false,
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _InsightHeader extends StatelessWidget {
+  final bool isSpendingMore;
+  final bool isSpendingLess;
+
+  const _InsightHeader({
+    required this.isSpendingMore,
+    required this.isSpendingLess,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isSpendingMore
+        ? const Color(0xFFDC2626)
+        : isSpendingLess
+            ? const Color(0xFF16A34A)
+            : const Color(0xFF1677F2);
+
+    final icon = isSpendingMore
+        ? Icons.trending_up_rounded
+        : isSpendingLess
+            ? Icons.trending_down_rounded
+            : Icons.drag_handle_rounded;
+
+    final title = isSpendingMore
+        ? 'Spesa in aumento'
+        : isSpendingLess
+            ? 'Stai spendendo meno'
+            : 'Spese stabili';
+
+    return Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Icon(
+            icon,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF172033),
+              fontSize: 21,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InsightStats extends StatelessWidget {
+  final String currentMonthLabel;
+  final String previousMonthLabel;
+  final double currentMonthExpenses;
+  final double previousMonthExpenses;
+  final double averagePastExpenses;
+  final String percentText;
+  final double balanceDifference;
+  final double currentMonthBudgetExpected;
+  final NumberFormat currencyFormatter;
+  final bool isMobile;
+
+  const _InsightStats({
+    required this.currentMonthLabel,
+    required this.previousMonthLabel,
+    required this.currentMonthExpenses,
+    required this.previousMonthExpenses,
+    required this.averagePastExpenses,
+    required this.percentText,
+    required this.balanceDifference,
+    required this.currentMonthBudgetExpected,
+    required this.currencyFormatter,
+    required this.isMobile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = [
+      _SmallInsightBox(
+        label: currentMonthLabel,
+        value: currencyFormatter.format(currentMonthExpenses),
+      ),
+      _SmallInsightBox(
+        label: previousMonthLabel,
+        value: currencyFormatter.format(previousMonthExpenses),
+      ),
+      _SmallInsightBox(
+        label: 'Media mesi',
+        value: currencyFormatter.format(averagePastExpenses),
+      ),
+      _SmallInsightBox(
+        label: 'Variazione',
+        value: percentText,
+      ),
+      _SmallInsightBox(
+        label: 'Budget previsti',
+        value: currencyFormatter.format(currentMonthBudgetExpected),
+      ),
+      _SmallInsightBox(
+        label: 'Saldo vs mese scorso',
+        value: currencyFormatter.format(balanceDifference),
+      ),
+    ];
+
+    if (isMobile) {
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: stats[0]),
+              const SizedBox(width: 10),
+              Expanded(child: stats[1]),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: stats[2]),
+              const SizedBox(width: 10),
+              Expanded(child: stats[3]),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: stats[4]),
+              const SizedBox(width: 10),
+              Expanded(child: stats[5]),
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: stats,
+    );
+  }
+}
+
+class _SmallInsightBox extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _SmallInsightBox({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    return Container(
+      width: isMobile ? double.infinity : 145,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE5ECF5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF172033),
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SummaryGrid extends StatelessWidget {
-  final double totalIncomes;
-  final double totalExpenses;
-  final double balance;
+  final double currentMonthIncomes;
+  final double currentMonthExpenses;
+  final double currentMonthBalance;
   final int activeGoals;
+  final int expenseCountCurrentMonth;
   final NumberFormat currencyFormatter;
 
   const _SummaryGrid({
-    required this.totalIncomes,
-    required this.totalExpenses,
-    required this.balance,
+    required this.currentMonthIncomes,
+    required this.currentMonthExpenses,
+    required this.currentMonthBalance,
     required this.activeGoals,
+    required this.expenseCountCurrentMonth,
     required this.currencyFormatter,
   });
 
@@ -494,20 +1266,22 @@ class _SummaryGrid extends StatelessWidget {
       _SummaryCard(
         icon: Icons.trending_up_rounded,
         title: 'Entrate mese',
-        value: currencyFormatter.format(totalIncomes),
-        subtitle: 'Totale entrate registrate',
+        value: currencyFormatter.format(currentMonthIncomes),
+        subtitle: 'Entrate registrate nel mese',
       ),
       _SummaryCard(
         icon: Icons.trending_down_rounded,
         title: 'Spese mese',
-        value: currencyFormatter.format(totalExpenses),
-        subtitle: 'Totale spese del mese',
+        value: currencyFormatter.format(currentMonthExpenses),
+        subtitle: '$expenseCountCurrentMonth movimenti conteggiati',
       ),
       _SummaryCard(
         icon: Icons.account_balance_wallet_rounded,
-        title: 'Saldo previsto',
-        value: currencyFormatter.format(balance),
-        subtitle: balance >= 0 ? 'Situazione positiva' : 'Saldo negativo',
+        title: 'Saldo mese',
+        value: currencyFormatter.format(currentMonthBalance),
+        subtitle: currentMonthBalance >= 0
+            ? 'Situazione positiva'
+            : 'Uscite superiori alle entrate',
       ),
       _SummaryCard(
         icon: Icons.flag_rounded,
@@ -682,53 +1456,397 @@ class _SummaryText extends StatelessWidget {
   }
 }
 
+class _MonthlyTrendChart extends StatelessWidget {
+  final List<_MonthlySummaryItem> summaries;
+  final NumberFormat currencyFormatter;
+
+  const _MonthlyTrendChart({
+    required this.summaries,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    return _Panel(
+      title: 'Andamento ultimi 6 mesi',
+      icon: Icons.show_chart_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Asse X: mesi • Asse Y: importi in euro',
+            style: TextStyle(
+              color: const Color(0xFF64748B),
+              fontSize: isMobile ? 13 : 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          SizedBox(height: isMobile ? 16 : 20),
+          SizedBox(
+            height: isMobile ? 260 : 320,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _MonthlyTrendChartPainter(
+                summaries: summaries,
+                currencyFormatter: currencyFormatter,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _ChartLegend(
+                label: 'Entrate',
+                color: Color(0xFF16A34A),
+              ),
+              _ChartLegend(
+                label: 'Spese',
+                color: Color(0xFFDC2626),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MonthlyTrendChartPainter extends CustomPainter {
+  final List<_MonthlySummaryItem> summaries;
+  final NumberFormat currencyFormatter;
+
+  _MonthlyTrendChartPainter({
+    required this.summaries,
+    required this.currencyFormatter,
+  });
+
+  static const Color _axisColor = Color(0xFFCBD5E1);
+  static const Color _gridColor = Color(0xFFEAF0F7);
+  static const Color _labelColor = Color(0xFF64748B);
+  static const Color _incomeColor = Color(0xFF16A34A);
+  static const Color _expenseColor = Color(0xFFDC2626);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (summaries.isEmpty) return;
+
+    final leftPadding = size.width < 420 ? 48.0 : 62.0;
+    const topPadding = 18.0;
+    const rightPadding = 18.0;
+    const bottomPadding = 42.0;
+
+    final chartRect = Rect.fromLTWH(
+      leftPadding,
+      topPadding,
+      size.width - leftPadding - rightPadding,
+      size.height - topPadding - bottomPadding,
+    );
+
+    final rawMaxValue = summaries.fold<double>(1, (maxValue, item) {
+      return math.max(maxValue, math.max(item.incomes, item.expenses));
+    });
+
+    final maxValue = _niceMaxValue(rawMaxValue);
+
+    final axisPaint = Paint()
+      ..color = _axisColor
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+
+    final gridPaint = Paint()
+      ..color = _gridColor
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawLine(
+      Offset(chartRect.left, chartRect.top),
+      Offset(chartRect.left, chartRect.bottom),
+      axisPaint,
+    );
+
+    canvas.drawLine(
+      Offset(chartRect.left, chartRect.bottom),
+      Offset(chartRect.right, chartRect.bottom),
+      axisPaint,
+    );
+
+    const gridLines = 4;
+
+    for (int i = 0; i <= gridLines; i++) {
+      final progress = i / gridLines;
+      final y = chartRect.bottom - chartRect.height * progress;
+      final value = maxValue * progress;
+
+      canvas.drawLine(
+        Offset(chartRect.left, y),
+        Offset(chartRect.right, y),
+        gridPaint,
+      );
+
+      _drawText(
+        canvas: canvas,
+        text: _compactCurrency(value),
+        offset: Offset(0, y - 8),
+        maxWidth: leftPadding - 8,
+        color: _labelColor,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+        textAlign: TextAlign.right,
+      );
+    }
+
+    final incomePoints = _pointsFor(
+      chartRect: chartRect,
+      maxValue: maxValue,
+      valueBuilder: (item) => item.incomes,
+    );
+
+    final expensePoints = _pointsFor(
+      chartRect: chartRect,
+      maxValue: maxValue,
+      valueBuilder: (item) => item.expenses,
+    );
+
+    _drawLine(
+      canvas: canvas,
+      points: incomePoints,
+      color: _incomeColor,
+    );
+
+    _drawLine(
+      canvas: canvas,
+      points: expensePoints,
+      color: _expenseColor,
+    );
+
+    _drawPoints(
+      canvas: canvas,
+      points: incomePoints,
+      color: _incomeColor,
+    );
+
+    _drawPoints(
+      canvas: canvas,
+      points: expensePoints,
+      color: _expenseColor,
+    );
+
+    for (int i = 0; i < summaries.length; i++) {
+      final x = summaries.length == 1
+          ? chartRect.center.dx
+          : chartRect.left + (chartRect.width / (summaries.length - 1)) * i;
+
+      _drawText(
+        canvas: canvas,
+        text: summaries[i].shortMonthLabel.toUpperCase(),
+        offset: Offset(x - 22, chartRect.bottom + 12),
+        maxWidth: 44,
+        color: _labelColor,
+        fontSize: 10,
+        fontWeight: FontWeight.w900,
+        textAlign: TextAlign.center,
+      );
+    }
+  }
+
+  List<Offset> _pointsFor({
+    required Rect chartRect,
+    required double maxValue,
+    required double Function(_MonthlySummaryItem item) valueBuilder,
+  }) {
+    return List.generate(summaries.length, (index) {
+      final item = summaries[index];
+
+      final x = summaries.length == 1
+          ? chartRect.center.dx
+          : chartRect.left +
+              (chartRect.width / (summaries.length - 1)) * index;
+
+      final normalizedValue = maxValue <= 0
+          ? 0.0
+          : (valueBuilder(item) / maxValue).clamp(0.0, 1.0);
+
+      final y = chartRect.bottom - chartRect.height * normalizedValue;
+
+      return Offset(x, y);
+    });
+  }
+
+  void _drawLine({
+    required Canvas canvas,
+    required List<Offset> points,
+    required Color color,
+  }) {
+    if (points.isEmpty) return;
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+
+    canvas.drawPath(path, paint);
+  }
+
+  void _drawPoints({
+    required Canvas canvas,
+    required List<Offset> points,
+    required Color color,
+  }) {
+    final outerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final innerPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    for (final point in points) {
+      canvas.drawCircle(point, 5.5, outerPaint);
+      canvas.drawCircle(point, 3.5, innerPaint);
+    }
+  }
+
+  void _drawText({
+    required Canvas canvas,
+    required String text,
+    required Offset offset,
+    required double maxWidth,
+    required Color color,
+    required double fontSize,
+    required FontWeight fontWeight,
+    TextAlign textAlign = TextAlign.left,
+  }) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: textAlign,
+      maxLines: 1,
+      ellipsis: '…',
+    );
+
+    textPainter.layout(maxWidth: maxWidth);
+    textPainter.paint(canvas, offset);
+  }
+
+  double _niceMaxValue(double value) {
+    if (value <= 100) return 100;
+
+    final magnitude = math.pow(10, value.toInt().toString().length - 1);
+    final normalized = value / magnitude;
+
+    double niceNormalized;
+
+    if (normalized <= 1) {
+      niceNormalized = 1;
+    } else if (normalized <= 2) {
+      niceNormalized = 2;
+    } else if (normalized <= 5) {
+      niceNormalized = 5;
+    } else {
+      niceNormalized = 10;
+    }
+
+    return niceNormalized * magnitude;
+  }
+
+  String _compactCurrency(double value) {
+    if (value >= 1000000) {
+      return '€${(value / 1000000).toStringAsFixed(1)}M';
+    }
+
+    if (value >= 1000) {
+      return '€${(value / 1000).toStringAsFixed(1)}k';
+    }
+
+    return currencyFormatter.format(value).replaceAll(',00', '');
+  }
+
+  @override
+  bool shouldRepaint(covariant _MonthlyTrendChartPainter oldDelegate) {
+    return oldDelegate.summaries != summaries;
+  }
+}
+
+class _ChartLegend extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _ChartLegend({
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 11,
+          height: 11,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ExpensesList extends StatelessWidget {
-  final QuerySnapshot<Map<String, dynamic>>? snapshot;
+  final List<_ExpensePreviewItem> items;
   final NumberFormat currencyFormatter;
   final DateFormat dateFormatter;
 
   const _ExpensesList({
-    required this.snapshot,
+    required this.items,
     required this.currencyFormatter,
     required this.dateFormatter,
   });
 
   @override
   Widget build(BuildContext context) {
-    final docs = snapshot?.docs ?? [];
-
     return _Panel(
-      title: 'Ultime spese',
+      title: 'Ultime spese del mese',
       icon: Icons.receipt_long_rounded,
-      child: docs.isEmpty
-          ? const _EmptyState(text: 'Nessuna spesa inserita.')
+      child: items.isEmpty
+          ? const _EmptyState(text: 'Nessuna spesa registrata questo mese.')
           : Column(
-              children: docs.take(6).map((doc) {
-                final data = doc.data();
-
-                final title = data['title'] ?? 'Spesa';
-                final category = data['category'] ?? 'Generale';
-
-                final rawAmount = data['amount'];
-                final amount = rawAmount is int
-                    ? rawAmount.toDouble()
-                    : rawAmount is double
-                        ? rawAmount
-                        : 0.0;
-
-                final isPaid = data['is_paid'] == true;
-                final reminderEnabled = data['reminder_enabled'] == true;
-
-                final dueDateRaw = data['due_date'];
-                final dueDate = dueDateRaw is Timestamp
-                    ? dateFormatter.format(dueDateRaw.toDate())
-                    : 'N/D';
-
+              children: items.map((item) {
                 return _ListRow(
-                  title: title.toString(),
+                  title: item.title,
                   subtitle:
-                      '${category.toString()} • Scadenza $dueDate • ${isPaid ? 'Pagata' : 'Da pagare'}${reminderEnabled ? ' • Promemoria' : ''}',
-                  trailing: currencyFormatter.format(amount),
+                      '${item.subtitle} • ${dateFormatter.format(item.date)}',
+                  trailing: currencyFormatter.format(item.amount),
                 );
               }).toList(),
             ),
@@ -767,14 +1885,18 @@ class _GoalsList extends StatelessWidget {
                     ? rawTarget.toDouble()
                     : rawTarget is double
                         ? rawTarget
-                        : 0.0;
+                        : rawTarget is num
+                            ? rawTarget.toDouble()
+                            : 0.0;
 
                 final rawCurrent = data['current_amount'];
                 final current = rawCurrent is int
                     ? rawCurrent.toDouble()
                     : rawCurrent is double
                         ? rawCurrent
-                        : 0.0;
+                        : rawCurrent is num
+                            ? rawCurrent.toDouble()
+                            : 0.0;
 
                 final deadlineRaw = data['deadline'];
                 final deadline = deadlineRaw is Timestamp
@@ -1123,9 +2245,18 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
   final _categoryController = TextEditingController(text: 'Generale');
 
   DateTime _selectedDueDate = DateTime.now();
+  DateTime _selectedMonth = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+  );
+
   bool _isPaid = false;
   bool _reminderEnabled = true;
   bool _loading = false;
+
+  DashboardExpenseType _expenseType = DashboardExpenseType.standard;
+
+  bool get _isPlanned => _expenseType == DashboardExpenseType.planned;
 
   @override
   void dispose() {
@@ -1150,6 +2281,22 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
     }
   }
 
+  Future<void> _pickMonth() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedMonth,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: 'Seleziona mese budget',
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedMonth = DateTime(picked.year, picked.month);
+      });
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -1162,10 +2309,12 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
     await widget.financeService.addExpense(
       title: _titleController.text.trim(),
       amount: amount,
-      dueDate: _selectedDueDate,
+      dueDate: _isPlanned ? null : _selectedDueDate,
       category: _categoryController.text.trim(),
-      isPaid: _isPaid,
-      reminderEnabled: _reminderEnabled,
+      isPaid: _isPlanned ? false : _isPaid,
+      reminderEnabled: _isPlanned ? false : _reminderEnabled,
+      type: _isPlanned ? 'planned' : 'standard',
+      month: _isPlanned ? _selectedMonth : null,
     );
 
     if (mounted) Navigator.pop(context);
@@ -1181,16 +2330,34 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
         key: _formKey,
         child: Column(
           children: [
+            _ExpenseTypeSelector(
+              selectedType: _expenseType,
+              onChanged: (value) {
+                setState(() {
+                  _expenseType = value;
+
+                  if (_isPlanned) {
+                    _isPaid = false;
+                    _reminderEnabled = false;
+                  }
+                });
+              },
+            ),
+            const SizedBox(height: 12),
             _TextInput(
               controller: _titleController,
-              label: 'Titolo',
-              validatorText: 'Inserisci il titolo',
+              label: _isPlanned ? 'Nome budget' : 'Titolo',
+              validatorText: _isPlanned
+                  ? 'Inserisci il nome del budget'
+                  : 'Inserisci il titolo',
             ),
             const SizedBox(height: 12),
             _TextInput(
               controller: _amountController,
-              label: 'Importo',
-              validatorText: 'Inserisci l’importo',
+              label: _isPlanned ? 'Budget previsto' : 'Importo',
+              validatorText: _isPlanned
+                  ? 'Inserisci il budget previsto'
+                  : 'Inserisci l’importo',
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -1202,30 +2369,153 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
               validatorText: 'Inserisci la categoria',
             ),
             const SizedBox(height: 12),
-            _DateButton(
-              label: 'Data scadenza',
-              date: _selectedDueDate,
-              onTap: _pickDueDate,
+            if (_isPlanned)
+              _DateButton(
+                label: 'Mese budget',
+                date: _selectedMonth,
+                displayFormat: 'MMMM yyyy',
+                onTap: _pickMonth,
+              )
+            else ...[
+              _DateButton(
+                label: 'Data scadenza',
+                date: _selectedDueDate,
+                onTap: _pickDueDate,
+              ),
+              const SizedBox(height: 10),
+              _SwitchTile(
+                title: 'Spesa già pagata',
+                value: _isPaid,
+                onChanged: (value) {
+                  setState(() {
+                    _isPaid = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              _SwitchTile(
+                title: 'Promemoria attivo',
+                value: _reminderEnabled,
+                onChanged: (value) {
+                  setState(() {
+                    _reminderEnabled = value;
+                  });
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpenseTypeSelector extends StatelessWidget {
+  final DashboardExpenseType selectedType;
+  final ValueChanged<DashboardExpenseType> onChanged;
+
+  const _ExpenseTypeSelector({
+    required this.selectedType,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isStandard = selectedType == DashboardExpenseType.standard;
+    final isPlanned = selectedType == DashboardExpenseType.planned;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE5ECF5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _TypeButton(
+              label: 'Spesa normale',
+              icon: Icons.receipt_long_rounded,
+              selected: isStandard,
+              onTap: () => onChanged(DashboardExpenseType.standard),
             ),
-            const SizedBox(height: 10),
-            _SwitchTile(
-              title: 'Spesa già pagata',
-              value: _isPaid,
-              onChanged: (value) {
-                setState(() {
-                  _isPaid = value;
-                });
-              },
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _TypeButton(
+              label: 'Budget mensile',
+              icon: Icons.account_balance_wallet_rounded,
+              selected: isPlanned,
+              onTap: () => onChanged(DashboardExpenseType.planned),
             ),
-            const SizedBox(height: 8),
-            _SwitchTile(
-              title: 'Promemoria attivo',
-              value: _reminderEnabled,
-              onChanged: (value) {
-                setState(() {
-                  _reminderEnabled = value;
-                });
-              },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TypeButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      height: 46,
+      decoration: BoxDecoration(
+        color: selected ? Colors.white : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : [],
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color:
+                  selected ? const Color(0xFF1677F2) : const Color(0xFF64748B),
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected
+                      ? const Color(0xFF172033)
+                      : const Color(0xFF64748B),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                ),
+              ),
             ),
           ],
         ),
@@ -1561,17 +2851,19 @@ class _TextInput extends StatelessWidget {
 class _DateButton extends StatelessWidget {
   final String label;
   final DateTime date;
+  final String displayFormat;
   final VoidCallback onTap;
 
   const _DateButton({
     required this.label,
     required this.date,
     required this.onTap,
+    this.displayFormat = 'dd/MM/yyyy',
   });
 
   @override
   Widget build(BuildContext context) {
-    final formattedDate = DateFormat('dd/MM/yyyy', 'it_IT').format(date);
+    final formattedDate = DateFormat(displayFormat, 'it_IT').format(date);
 
     return InkWell(
       onTap: onTap,
