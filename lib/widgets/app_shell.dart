@@ -159,6 +159,7 @@ class _AppShellState extends State<AppShell> {
 
     return Scaffold(
       backgroundColor: colors.scaffold,
+      extendBody: true,
       appBar: isDesktop
           ? null
           : AppBar(
@@ -326,8 +327,6 @@ class _ShellColors {
         primaryText: Color(0xFF0F172A),
         danger: Color(0xFFF87171),
         shadow: Colors.black,
-
-        // Logo da usare quando il tema è scuro
         logoAsset: 'assets/images/pocketplan_logo_themes.png',
       );
     }
@@ -347,8 +346,6 @@ class _ShellColors {
       primaryText: Colors.white,
       danger: Color(0xFFDC2626),
       shadow: Colors.black,
-
-      // Logo da usare quando il tema è chiaro
       logoAsset: 'assets/images/pocketplan_logo.png',
     );
   }
@@ -605,7 +602,7 @@ class _MobileBottomNav extends StatelessWidget {
     final aiPlanner = items[4];
 
     return SizedBox(
-      height: 96 + bottomPadding,
+      height: 88 + bottomPadding,
       child: Stack(
         clipBehavior: Clip.none,
         alignment: Alignment.bottomCenter,
@@ -617,22 +614,21 @@ class _MobileBottomNav extends StatelessWidget {
             child: Container(
               height: 74 + bottomPadding,
               padding: EdgeInsets.fromLTRB(
-                14,
-                8,
-                14,
+                12,
+                10,
+                12,
                 bottomPadding > 0 ? bottomPadding : 10,
               ),
               decoration: BoxDecoration(
                 color: colors.card,
-                border: Border(
-                  top: BorderSide(
-                    color: colors.border,
-                  ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
                 ),
                 boxShadow: [
                   BoxShadow(
                     color: colors.shadow.withValues(
-                      alpha: colors.isDark ? 0.22 : 0.08,
+                      alpha: colors.isDark ? 0.24 : 0.08,
                     ),
                     blurRadius: 24,
                     offset: const Offset(0, -8),
@@ -656,9 +652,7 @@ class _MobileBottomNav extends StatelessWidget {
                       onTap: () => onSelect(2),
                     ),
                   ),
-                  const Expanded(
-                    child: SizedBox(),
-                  ),
+                  const SizedBox(width: 78),
                   Expanded(
                     child: _MobileNavItem(
                       item: goals,
@@ -678,7 +672,7 @@ class _MobileBottomNav extends StatelessWidget {
             ),
           ),
           Positioned(
-            top: 0,
+            bottom: bottomPadding > 0 ? bottomPadding + 13 : 14,
             child: _MobileDashboardButton(
               item: dashboard,
               selected: selectedIndex == 0,
@@ -716,9 +710,8 @@ class _MobileNavItem extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
-          height: 56,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          height: 52,
+          padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 2),
           decoration: BoxDecoration(
             color: selected ? colors.primarySoft : Colors.transparent,
             borderRadius: BorderRadius.circular(16),
@@ -729,9 +722,9 @@ class _MobileNavItem extends StatelessWidget {
               Icon(
                 item.icon,
                 color: color,
-                size: selected ? 24 : 22,
+                size: selected ? 23 : 21,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
@@ -739,7 +732,7 @@ class _MobileNavItem extends StatelessWidget {
                   maxLines: 1,
                   style: TextStyle(
                     color: color,
-                    fontSize: 10.5,
+                    fontSize: 9.8,
                     fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
                   ),
                 ),
@@ -767,20 +760,13 @@ class _MobileDashboardButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = _ShellColors.of(context);
 
-    final circleColor = selected ? colors.primary : colors.cardSofter;
-    final secondCircleColor =
-        selected ? colors.primary.withValues(alpha: 0.82) : colors.cardSoft;
-
-    final iconColor = selected ? colors.primaryText : colors.textMuted;
+    final circleColor = selected ? colors.primary : colors.card;
+    final iconColor = selected ? colors.primaryText : colors.primary;
     final textColor = selected ? colors.primary : colors.textMuted;
 
-    final shadowColor = selected
-        ? colors.primary.withValues(alpha: colors.isDark ? 0.28 : 0.35)
-        : colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.08);
-
     return SizedBox(
-      width: 86,
-      height: 88,
+      width: 84,
+      height: 82,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -792,29 +778,28 @@ class _MobileDashboardButton extends StatelessWidget {
               AnimatedContainer(
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutBack,
-                width: selected ? 64 : 60,
-                height: selected ? 64 : 60,
+                width: selected ? 62 : 60,
+                height: selected ? 62 : 60,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      secondCircleColor,
-                      circleColor,
-                    ],
-                  ),
+                  color: circleColor,
                   shape: BoxShape.circle,
+                  border: Border.all(
+                    color: colors.scaffold,
+                    width: 5,
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: shadowColor,
-                      blurRadius: selected ? 22 : 12,
+                      color: selected
+                          ? colors.primary.withValues(
+                              alpha: colors.isDark ? 0.28 : 0.30,
+                            )
+                          : colors.shadow.withValues(
+                              alpha: colors.isDark ? 0.20 : 0.09,
+                            ),
+                      blurRadius: selected ? 22 : 16,
                       offset: const Offset(0, 8),
                     ),
                   ],
-                  border: Border.all(
-                    color: colors.card,
-                    width: 4,
-                  ),
                 ),
                 child: Icon(
                   item.icon,
@@ -822,7 +807,7 @@ class _MobileDashboardButton extends StatelessWidget {
                   size: selected ? 29 : 27,
                 ),
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
@@ -830,7 +815,7 @@ class _MobileDashboardButton extends StatelessWidget {
                   maxLines: 1,
                   style: TextStyle(
                     color: textColor,
-                    fontSize: 10.5,
+                    fontSize: 10,
                     fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
                   ),
                 ),
