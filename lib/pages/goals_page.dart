@@ -191,6 +191,7 @@ class _GoalsPageState extends State<GoalsPage> {
     required Widget child,
     double maxDesktopWidth = 480,
   }) async {
+    final colors = _GoalsColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -209,6 +210,7 @@ class _GoalsPageState extends State<GoalsPage> {
     await showDialog(
       context: context,
       builder: (_) => Dialog(
+        backgroundColor: colors.card,
         insetPadding: const EdgeInsets.all(24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(28),
@@ -225,27 +227,41 @@ class _GoalsPageState extends State<GoalsPage> {
     required String goalId,
     required String title,
   }) async {
+    final colors = _GoalsColors.of(context);
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) {
         return AlertDialog(
+          backgroundColor: colors.card,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          title: const Text(
+          title: Text(
             'Eliminare obiettivo?',
             style: TextStyle(
               fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
+              color: colors.textPrimary,
             ),
           ),
           content: Text(
             'Vuoi davvero eliminare "$title"? Questa azione non può essere annullata.',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annulla'),
+              child: Text(
+                'Annulla',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context, true),
@@ -305,8 +321,10 @@ class _GoalsPageState extends State<GoalsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: colors.scaffold,
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _financeService.goalsStream(),
         builder: (context, snapshot) {
@@ -315,7 +333,8 @@ class _GoalsPageState extends State<GoalsPage> {
 
           final totalTarget = _sumTarget(docs);
           final totalSaved = _sumSaved(docs);
-          final totalRemaining = (totalTarget - totalSaved).clamp(0, totalTarget);
+          final totalRemaining =
+              (totalTarget - totalSaved).clamp(0, totalTarget);
           final completedCount = _completedCount(docs);
           final expiredCount = _expiredCount(docs);
 
@@ -345,6 +364,7 @@ class _GoalsPageState extends State<GoalsPage> {
                           ),
                           completedCount: completedCount,
                           totalGoals: docs.length,
+                          expiredCount: expiredCount,
                           onAddGoal: () => _showGoalDialog(),
                         ),
                         SizedBox(height: isMobile ? 14 : 18),
@@ -357,11 +377,14 @@ class _GoalsPageState extends State<GoalsPage> {
                           },
                         ),
                         SizedBox(height: isMobile ? 18 : 22),
-                        if (snapshot.connectionState == ConnectionState.waiting)
-                          const Center(
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting)
+                          Center(
                             child: Padding(
-                              padding: EdgeInsets.all(32),
-                              child: CircularProgressIndicator(),
+                              padding: const EdgeInsets.all(32),
+                              child: CircularProgressIndicator(
+                                color: colors.primary,
+                              ),
                             ),
                           )
                         else if (filteredDocs.isEmpty)
@@ -447,12 +470,204 @@ class _GoalsPageState extends State<GoalsPage> {
   }
 }
 
+class _GoalsColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color headerBackground;
+  final Color headerText;
+  final Color headerMuted;
+  final Color shadow;
+
+  const _GoalsColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.headerBackground,
+    required this.headerText,
+    required this.headerMuted,
+    required this.shadow,
+  });
+
+  factory _GoalsColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _GoalsColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        headerBackground: Color(0xFF020617),
+        headerText: Colors.white,
+        headerMuted: Color(0xFFCBD5E1),
+        shadow: Colors.black,
+      );
+    }
+
+    return const _GoalsColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF7FAFE),
+      cardSofter: Color(0xFFF3F6FB),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      headerBackground: Color(0xFF172033),
+      headerText: Colors.white,
+      headerMuted: Color(0xFFD7DEE9),
+      shadow: Colors.black,
+    );
+  }
+}
+
+BoxDecoration _goalsCardDecoration(BuildContext context) {
+  final colors = _GoalsColors.of(context);
+
+  return BoxDecoration(
+    color: colors.card,
+    borderRadius: BorderRadius.circular(26),
+    border: Border.all(
+      color: colors.border,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
+        blurRadius: colors.isDark ? 22 : 16,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+}
+
+InputDecoration _goalsInputDecoration({
+  required BuildContext context,
+  required String label,
+  IconData? suffixIcon,
+}) {
+  final colors = _GoalsColors.of(context);
+
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(
+      color: colors.textSecondary,
+      fontWeight: FontWeight.w700,
+    ),
+    suffixIcon: suffixIcon == null
+        ? null
+        : Icon(
+            suffixIcon,
+            color: colors.textSecondary,
+          ),
+    filled: true,
+    fillColor: colors.cardSoft,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.primary,
+        width: 1.5,
+      ),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+      ),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+        width: 1.5,
+      ),
+    ),
+  );
+}
+
+Future<DateTime?> _showGoalsDatePicker({
+  required BuildContext context,
+  required DateTime initialDate,
+  required DateTime firstDate,
+  required DateTime lastDate,
+  String? helpText,
+}) async {
+  final colors = _GoalsColors.of(context);
+
+  return showDatePicker(
+    context: context,
+    initialDate: initialDate,
+    firstDate: firstDate,
+    lastDate: lastDate,
+    helpText: helpText,
+    builder: (context, child) {
+      return Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: colors.isDark
+              ? const ColorScheme.dark(
+                  primary: Color(0xFF60A5FA),
+                  onPrimary: Color(0xFF0F172A),
+                  surface: Color(0xFF172033),
+                  onSurface: Color(0xFFF8FAFC),
+                )
+              : const ColorScheme.light(
+                  primary: Color(0xFF1677F2),
+                  onPrimary: Colors.white,
+                  surface: Colors.white,
+                  onSurface: Color(0xFF172033),
+                ),
+        ),
+        child: child!,
+      );
+    },
+  );
+}
+
 class _GoalsHeader extends StatelessWidget {
   final String totalTarget;
   final String totalSaved;
   final String totalRemaining;
   final int completedCount;
   final int totalGoals;
+  final int expiredCount;
   final VoidCallback onAddGoal;
 
   const _GoalsHeader({
@@ -461,11 +676,13 @@ class _GoalsHeader extends StatelessWidget {
     required this.totalRemaining,
     required this.completedCount,
     required this.totalGoals,
+    required this.expiredCount,
     required this.onAddGoal,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -473,11 +690,11 @@ class _GoalsHeader extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 22 : 28),
       decoration: BoxDecoration(
-        color: const Color(0xFF172033),
+        color: colors.headerBackground,
         borderRadius: BorderRadius.circular(isMobile ? 26 : 30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.10),
+            color: colors.shadow.withValues(alpha: colors.isDark ? 0.24 : 0.10),
             blurRadius: 24,
             offset: const Offset(0, 14),
           ),
@@ -495,6 +712,7 @@ class _GoalsHeader extends StatelessWidget {
                   totalRemaining: totalRemaining,
                   completedCount: completedCount,
                   totalGoals: totalGoals,
+                  expiredCount: expiredCount,
                   isMobile: true,
                 ),
                 const SizedBox(height: 16),
@@ -506,8 +724,11 @@ class _GoalsHeader extends StatelessWidget {
                     icon: const Icon(Icons.add_rounded),
                     label: const Text('Nuovo obiettivo'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF172033),
+                      backgroundColor:
+                          colors.isDark ? colors.primary : Colors.white,
+                      foregroundColor: colors.isDark
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFF172033),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
@@ -536,6 +757,7 @@ class _GoalsHeader extends StatelessWidget {
                       totalRemaining: totalRemaining,
                       completedCount: completedCount,
                       totalGoals: totalGoals,
+                      expiredCount: expiredCount,
                       isMobile: false,
                     ),
                     const SizedBox(height: 12),
@@ -546,8 +768,11 @@ class _GoalsHeader extends StatelessWidget {
                         icon: const Icon(Icons.add_rounded),
                         label: const Text('Nuovo obiettivo'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF172033),
+                          backgroundColor:
+                              colors.isDark ? colors.primary : Colors.white,
+                          foregroundColor: colors.isDark
+                              ? const Color(0xFF0F172A)
+                              : const Color(0xFF172033),
                           elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
@@ -575,13 +800,15 @@ class _GoalsHeaderText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Obiettivi',
           style: TextStyle(
-            color: Colors.white,
+            color: colors.headerText,
             fontSize: isMobile ? 27 : 32,
             fontWeight: FontWeight.w900,
             height: 1.1,
@@ -591,7 +818,7 @@ class _GoalsHeaderText extends StatelessWidget {
         Text(
           'Crea traguardi di risparmio, monitora quanto hai già messo da parte e capisci quanto manca per arrivare al risultato.',
           style: TextStyle(
-            color: const Color(0xFFD7DEE9),
+            color: colors.headerMuted,
             fontSize: isMobile ? 15 : 16,
             height: 1.45,
           ),
@@ -607,6 +834,7 @@ class _HeaderStatsGrid extends StatelessWidget {
   final String totalRemaining;
   final int completedCount;
   final int totalGoals;
+  final int expiredCount;
   final bool isMobile;
 
   const _HeaderStatsGrid({
@@ -615,6 +843,7 @@ class _HeaderStatsGrid extends StatelessWidget {
     required this.totalRemaining,
     required this.completedCount,
     required this.totalGoals,
+    required this.expiredCount,
     required this.isMobile,
   });
 
@@ -681,6 +910,7 @@ class _HeaderMiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -701,8 +931,8 @@ class _HeaderMiniStat extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFFD7DEE9),
+            style: TextStyle(
+              color: colors.headerMuted,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -713,7 +943,7 @@ class _HeaderMiniStat extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: Colors.white,
+              color: colors.headerText,
               fontSize: isMobile ? 18 : 19,
               fontWeight: FontWeight.w900,
             ),
@@ -735,25 +965,15 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      decoration: _goalsCardDecoration(context).copyWith(
         borderRadius: BorderRadius.circular(isMobile ? 24 : 999),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: isMobile
           ? Column(
@@ -846,11 +1066,13 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       height: 42,
       decoration: BoxDecoration(
-        color: selected ? const Color(0xFFE3F2FD) : Colors.transparent,
+        color: selected ? colors.primarySoft : Colors.transparent,
         borderRadius: BorderRadius.circular(999),
       ),
       child: InkWell(
@@ -862,8 +1084,7 @@ class _FilterChipButton extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color:
-                  selected ? const Color(0xFF1565C0) : const Color(0xFF4B5563),
+              color: selected ? colors.primary : colors.textSecondary,
               fontWeight: FontWeight.w900,
               fontSize: 13,
             ),
@@ -914,33 +1135,24 @@ class _GoalCard extends StatelessWidget {
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 14),
       padding: EdgeInsets.all(isMobile ? 16 : 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      decoration: _goalsCardDecoration(context).copyWith(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
-      child: isMobile ? _mobileLayout() : _desktopLayout(),
+      child: isMobile ? _mobileLayout(context) : _desktopLayout(context),
     );
   }
 
-  Widget _mobileLayout() {
+  Widget _mobileLayout(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _topMobile(),
+        _topMobile(context),
         const SizedBox(height: 14),
-        _goalInfo(),
+        _goalInfo(context),
         const SizedBox(height: 14),
-        _goalProgress(),
+        _goalProgress(context),
         const SizedBox(height: 14),
         SizedBox(
           width: double.infinity,
@@ -950,10 +1162,11 @@ class _GoalCard extends StatelessWidget {
             icon: const Icon(Icons.add_card_rounded),
             label: const Text('Aggiungi risparmio'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1677F2),
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: const Color(0xFFE5ECF5),
-              disabledForegroundColor: const Color(0xFF94A3B8),
+              backgroundColor: colors.primary,
+              foregroundColor:
+                  colors.isDark ? const Color(0xFF0F172A) : Colors.white,
+              disabledBackgroundColor: colors.border,
+              disabledForegroundColor: colors.textMuted,
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -968,7 +1181,7 @@ class _GoalCard extends StatelessWidget {
     );
   }
 
-  Widget _desktopLayout() {
+  Widget _desktopLayout(BuildContext context) {
     return Column(
       children: [
         Row(
@@ -979,19 +1192,21 @@ class _GoalCard extends StatelessWidget {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: _desktopContent(),
+              child: _desktopContent(context),
             ),
             const SizedBox(width: 14),
-            _actionsDesktop(),
+            _actionsDesktop(context),
           ],
         ),
         const SizedBox(height: 16),
-        _goalProgress(),
+        _goalProgress(context),
       ],
     );
   }
 
-  Widget _topMobile() {
+  Widget _topMobile(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Row(
       children: [
         _GoalIcon(
@@ -1007,37 +1222,49 @@ class _GoalCard extends StatelessWidget {
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 currentAmount,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E88E5),
+                  color: colors.primary,
                 ),
               ),
             ],
           ),
         ),
         PopupMenuButton<String>(
+          color: colors.card,
+          iconColor: colors.textSecondary,
           onSelected: (value) {
             if (value == 'edit') onEdit();
             if (value == 'delete') onDelete();
           },
-          itemBuilder: (context) => const [
+          itemBuilder: (context) => [
             PopupMenuItem(
               value: 'edit',
-              child: Text('Modifica'),
+              child: Text(
+                'Modifica',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: 'delete',
-              child: Text('Elimina'),
+              child: Text(
+                'Elimina',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                ),
+              ),
             ),
           ],
           icon: const Icon(Icons.more_vert_rounded),
@@ -1046,7 +1273,9 @@ class _GoalCard extends StatelessWidget {
     );
   }
 
-  Widget _desktopContent() {
+  Widget _desktopContent(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1055,30 +1284,30 @@ class _GoalCard extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                 ),
               ),
             ),
             Text(
               currentAmount,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF172033),
+                color: colors.textPrimary,
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        _goalInfo(),
+        _goalInfo(context),
       ],
     );
   }
 
-  Widget _goalInfo() {
+  Widget _goalInfo(BuildContext context) {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1103,7 +1332,9 @@ class _GoalCard extends StatelessWidget {
     );
   }
 
-  Widget _actionsDesktop() {
+  Widget _actionsDesktop(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1113,38 +1344,42 @@ class _GoalCard extends StatelessWidget {
           icon: const Icon(Icons.add_card_rounded),
           label: const Text('Aggiungi'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1677F2),
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: const Color(0xFFE5ECF5),
-            disabledForegroundColor: const Color(0xFF94A3B8),
+            backgroundColor: colors.primary,
+            foregroundColor:
+                colors.isDark ? const Color(0xFF0F172A) : Colors.white,
+            disabledBackgroundColor: colors.border,
+            disabledForegroundColor: colors.textMuted,
             elevation: 0,
           ),
         ),
         IconButton(
           tooltip: 'Modifica',
           onPressed: onEdit,
+          color: colors.textSecondary,
           icon: const Icon(Icons.edit_outlined),
         ),
         IconButton(
           tooltip: 'Elimina',
           onPressed: onDelete,
+          color: colors.textSecondary,
           icon: const Icon(Icons.delete_outline_rounded),
         ),
       ],
     );
   }
 
-  Widget _goalProgress() {
+  Widget _goalProgress(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final percent = (progress * 100).round();
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1177,9 +1412,8 @@ class _GoalCard extends StatelessWidget {
             child: LinearProgressIndicator(
               minHeight: 10,
               value: progress,
-              backgroundColor: const Color(0xFFE5ECF5),
-              color:
-                  completed ? const Color(0xFF16A34A) : const Color(0xFF1677F2),
+              backgroundColor: colors.border,
+              color: completed ? const Color(0xFF16A34A) : colors.primary,
             ),
           ),
         ],
@@ -1199,14 +1433,16 @@ class _GoalMiniValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Column(
       children: [
         Text(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
+          style: TextStyle(
+            color: colors.textSecondary,
             fontWeight: FontWeight.w700,
             fontSize: 12,
           ),
@@ -1216,8 +1452,8 @@ class _GoalMiniValue extends StatelessWidget {
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF172033),
+          style: TextStyle(
+            color: colors.textPrimary,
             fontWeight: FontWeight.w900,
             fontSize: 14,
           ),
@@ -1238,11 +1474,17 @@ class _GoalIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     final bgColor = completed
-        ? const Color(0xFFEAF8EF)
+        ? colors.isDark
+            ? const Color(0xFF052E16)
+            : const Color(0xFFEAF8EF)
         : deadlineColor == const Color(0xFFDC2626)
-            ? const Color(0xFFFEE2E2)
-            : const Color(0xFFE3F2FD);
+            ? colors.isDark
+                ? const Color(0xFF450A0A)
+                : const Color(0xFFFEE2E2)
+            : colors.primarySoft;
 
     final iconColor = completed ? const Color(0xFF16A34A) : deadlineColor;
 
@@ -1272,14 +1514,19 @@ class _InfoBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F6FB),
+        color: colors.cardSofter,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.isDark ? colors.border : Colors.transparent,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1287,13 +1534,13 @@ class _InfoBadge extends StatelessWidget {
           Icon(
             icon,
             size: 15,
-            color: const Color(0xFF64748B),
+            color: colors.textSecondary,
           ),
           const SizedBox(width: 5),
           Text(
             text,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -1315,13 +1562,15 @@ class _ColoredBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withValues(alpha: colors.isDark ? 0.18 : 0.1),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -1345,6 +1594,8 @@ class _EmptyGoals extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     final message = selectedFilter == GoalFilter.all
         ? 'Crea il tuo primo obiettivo e inizia a monitorare quanto ti manca per raggiungerlo.'
         : 'Non ci sono obiettivi con questo filtro. Prova a cambiarlo oppure crea un nuovo obiettivo.';
@@ -1352,35 +1603,29 @@ class _EmptyGoals extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(34),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-      ),
+      decoration: _goalsCardDecoration(context),
       child: Column(
         children: [
-          const Icon(
+          Icon(
             Icons.flag_rounded,
             size: 44,
-            color: Color(0xFF94A3B8),
+            color: colors.textMuted,
           ),
           const SizedBox(height: 14),
-          const Text(
+          Text(
             'Nessun obiettivo trovato',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
+              color: colors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
             ),
           ),
         ],
@@ -1468,7 +1713,7 @@ class _GoalFormDialogState extends State<_GoalFormDialog> {
   }
 
   Future<void> _pickDeadline() async {
-    final picked = await showDatePicker(
+    final picked = await _showGoalsDatePicker(
       context: context,
       initialDate: _selectedDeadline,
       firstDate: DateTime(2020),
@@ -1615,6 +1860,8 @@ class _GoalSavingDialogState extends State<_GoalSavingDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     final formattedRemaining = NumberFormat.currency(
       locale: 'it_IT',
       symbol: '€',
@@ -1633,13 +1880,13 @@ class _GoalSavingDialogState extends State<_GoalSavingDialog> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFE3F2FD),
+                color: colors.primarySoft,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Text(
                 '${widget.title}\nMancante attuale: $formattedRemaining',
-                style: const TextStyle(
-                  color: Color(0xFF1565C0),
+                style: TextStyle(
+                  color: colors.primary,
                   fontWeight: FontWeight.w900,
                   height: 1.4,
                 ),
@@ -1678,6 +1925,7 @@ class _BaseFormSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
@@ -1695,7 +1943,7 @@ class _BaseFormSheet extends StatelessWidget {
           isMobile ? 20 : 24,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.card,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(isMobile ? 28 : 24),
             bottom: Radius.circular(isMobile ? 0 : 24),
@@ -1713,7 +1961,7 @@ class _BaseFormSheet extends StatelessWidget {
                     width: 42,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD7DEE9),
+                      color: colors.border,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -1724,16 +1972,19 @@ class _BaseFormSheet extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 23,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF172033),
+                          color: colors.textPrimary,
                         ),
                       ),
                     ),
                     IconButton(
                       onPressed: loading ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.close_rounded),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: colors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -1749,9 +2000,9 @@ class _BaseFormSheet extends StatelessWidget {
                           onPressed:
                               loading ? null : () => Navigator.pop(context),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF172033),
-                            side: const BorderSide(
-                              color: Color(0xFFE5ECF5),
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(
+                              color: colors.border,
                             ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -1771,8 +2022,10 @@ class _BaseFormSheet extends StatelessWidget {
                         child: ElevatedButton(
                           onPressed: loading ? null : onSave,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1677F2),
-                            foregroundColor: Colors.white,
+                            backgroundColor: colors.primary,
+                            foregroundColor: colors.isDark
+                                ? const Color(0xFF0F172A)
+                                : Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -1782,12 +2035,14 @@ class _BaseFormSheet extends StatelessWidget {
                             ),
                           ),
                           child: loading
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: colors.isDark
+                                        ? const Color(0xFF0F172A)
+                                        : Colors.white,
                                   ),
                                 )
                               : Text(saveLabel),
@@ -1822,32 +2077,18 @@ class _TextInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
-      decoration: InputDecoration(
-        labelText: label,
-        filled: true,
-        fillColor: const Color(0xFFF7FAFE),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFF1677F2),
-            width: 1.5,
-          ),
-        ),
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: _goalsInputDecoration(
+        context: context,
+        label: label,
       ),
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
@@ -1898,35 +2139,23 @@ class _DateButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
     final formattedDate = DateFormat(displayFormat, 'it_IT').format(date);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: const Color(0xFFF7FAFE),
-          suffixIcon: const Icon(Icons.calendar_month_rounded),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
+        decoration: _goalsInputDecoration(
+          context: context,
+          label: label,
+          suffixIcon: Icons.calendar_month_rounded,
         ),
         child: Text(
           formattedDate,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF172033),
+            color: colors.textPrimary,
           ),
         ),
       ),

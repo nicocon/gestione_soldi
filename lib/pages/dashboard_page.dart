@@ -229,6 +229,36 @@ class _DashboardPageState extends State<DashboardPage> {
     return count;
   }
 
+  double _sumBankAccounts(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+  ) {
+    if (snapshot == null) return 0;
+
+    double total = 0;
+
+    for (final doc in snapshot.docs) {
+      total += _amountFrom(doc.data()['balance']);
+    }
+
+    return total;
+  }
+
+  List<_BankAccountDashboardItem> _bankAccountItems(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+  ) {
+    if (snapshot == null) return [];
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return _BankAccountDashboardItem(
+        id: doc.id,
+        name: (data['name'] ?? 'Conto').toString(),
+        balance: _amountFrom(data['balance']),
+      );
+    }).toList();
+  }
+
   List<_MonthlySummaryItem> _monthlySummaries(
     QuerySnapshot<Map<String, dynamic>>? incomesSnapshot,
     QuerySnapshot<Map<String, dynamic>>? expensesSnapshot,
@@ -331,10 +361,13 @@ class _DashboardPageState extends State<DashboardPage> {
     return items.take(6).toList();
   }
 
-  Future<void> _showAddIncomeDialog() async {
+  Future<void> _showAddIncomeDialog({
+    required List<_BankAccountDashboardItem> bankAccounts,
+  }) async {
     await _showResponsiveSheet(
       child: _AddIncomeDialog(
         financeService: _financeService,
+        bankAccounts: bankAccounts,
       ),
     );
   }
@@ -358,6 +391,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _showResponsiveSheet({
     required Widget child,
   }) async {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -376,6 +410,7 @@ class _DashboardPageState extends State<DashboardPage> {
     await showDialog(
       context: context,
       builder: (_) => Dialog(
+        backgroundColor: colors.card,
         insetPadding: const EdgeInsets.all(24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(28),
@@ -390,18 +425,26 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final user = _authService.currentUser;
 
     if (user == null) {
-      return const Scaffold(
+      return Scaffold(
+        backgroundColor: colors.scaffold,
         body: Center(
-          child: Text('Utente non trovato'),
+          child: Text(
+            'Utente non trovato',
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: colors.scaffold,
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('users')
@@ -420,190 +463,249 @@ class _DashboardPageState extends State<DashboardPage> {
                   return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                     stream: _financeService.goalsStream(),
                     builder: (context, goalsSnapshot) {
-                      final incomesDocs = incomesSnapshot.data;
-                      final expensesDocs = expensesSnapshot.data;
-                      final goalsDocs = goalsSnapshot.data;
+                      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: _financeService.bankAccountsStream(),
+                        builder: (context, bankAccountsSnapshot) {
+                          final incomesDocs = incomesSnapshot.data;
+                          final expensesDocs = expensesSnapshot.data;
+                          final goalsDocs = goalsSnapshot.data;
+                          final bankAccountsDocs = bankAccountsSnapshot.data;
 
-                      final currentMonth = _currentMonth;
-                      final previousMonth = _previousMonth;
+                          final currentMonth = _currentMonth;
+                          final previousMonth = _previousMonth;
 
-                      final months = _lastMonths(count: 6);
+                          final months = _lastMonths(count: 6);
 
-                      final monthlySummaries = _monthlySummaries(
-                        incomesDocs,
-                        expensesDocs,
-                        months,
-                      );
+                          final monthlySummaries = _monthlySummaries(
+                            incomesDocs,
+                            expensesDocs,
+                            months,
+                          );
 
-                      final currentMonthIncomes = _sumIncomesForMonth(
-                        incomesDocs,
-                        currentMonth,
-                      );
+                          final currentMonthIncomes = _sumIncomesForMonth(
+                            incomesDocs,
+                            currentMonth,
+                          );
 
-                      final previousMonthIncomes = _sumIncomesForMonth(
-                        incomesDocs,
-                        previousMonth,
-                      );
+                          final previousMonthIncomes = _sumIncomesForMonth(
+                            incomesDocs,
+                            previousMonth,
+                          );
 
-                      final currentMonthExpenses = _sumExpensesForMonth(
-                        expensesDocs,
-                        currentMonth,
-                      );
+                          final currentMonthExpenses = _sumExpensesForMonth(
+                            expensesDocs,
+                            currentMonth,
+                          );
 
-                      final previousMonthExpenses = _sumExpensesForMonth(
-                        expensesDocs,
-                        previousMonth,
-                      );
+                          final previousMonthExpenses = _sumExpensesForMonth(
+                            expensesDocs,
+                            previousMonth,
+                          );
 
-                      final averagePastExpenses =
-                          _averagePastExpenses(monthlySummaries);
+                          final averagePastExpenses =
+                              _averagePastExpenses(monthlySummaries);
 
-                      final currentMonthBudgetExpected =
-                          _sumPlannedBudgetExpectedForMonth(
-                        expensesDocs,
-                        currentMonth,
-                      );
+                          final currentMonthBudgetExpected =
+                              _sumPlannedBudgetExpectedForMonth(
+                            expensesDocs,
+                            currentMonth,
+                          );
 
-                      final currentMonthBalance =
-                          currentMonthIncomes - currentMonthExpenses;
+                          final currentMonthBalance =
+                              currentMonthIncomes - currentMonthExpenses;
 
-                      final previousMonthBalance =
-                          previousMonthIncomes - previousMonthExpenses;
+                          final previousMonthBalance =
+                              previousMonthIncomes - previousMonthExpenses;
 
-                      final expensesDifference =
-                          currentMonthExpenses - previousMonthExpenses;
+                          final totalBankBalance = _sumBankAccounts(
+                            bankAccountsDocs,
+                          );
 
-                      final expensesDifferencePercent =
-                          previousMonthExpenses <= 0
-                              ? null
-                              : (expensesDifference / previousMonthExpenses) *
-                                  100;
+                          final bankAccounts = _bankAccountItems(
+                            bankAccountsDocs,
+                          );
 
-                      final activeGoals = goalsDocs?.docs.length ?? 0;
+                          final expensesDifference =
+                              currentMonthExpenses - previousMonthExpenses;
 
-                      final expenseCountCurrentMonth = _countMonthlyExpenses(
-                        expensesDocs,
-                        currentMonth,
-                      );
+                          final expensesDifferencePercent =
+                              previousMonthExpenses <= 0
+                                  ? null
+                                  : (expensesDifference /
+                                          previousMonthExpenses) *
+                                      100;
 
-                      final currentMonthExpenseItems =
-                          _expensePreviewItemsForCurrentMonth(expensesDocs);
+                          final activeGoals = goalsDocs?.docs.length ?? 0;
 
-                      return LayoutBuilder(
-                        builder: (context, constraints) {
-                          final isMobile = constraints.maxWidth < 700;
-                          final isWide = constraints.maxWidth >= 950;
+                          final expenseCountCurrentMonth =
+                              _countMonthlyExpenses(
+                            expensesDocs,
+                            currentMonth,
+                          );
 
-                          return SingleChildScrollView(
-                            physics: const BouncingScrollPhysics(),
-                            padding: EdgeInsets.fromLTRB(
-                              isMobile ? 16 : 24,
-                              isMobile ? 16 : 24,
-                              isMobile ? 16 : 24,
-                              isMobile ? 120 : 36,
-                            ),
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 1200),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _HeaderSection(
-                                      name: name.toString(),
-                                      currentMonthLabel:
-                                          _monthFormatter.format(currentMonth),
-                                      onAddIncome: _showAddIncomeDialog,
-                                      onAddExpense: _showAddExpenseDialog,
-                                      onAddGoal: _showAddGoalDialog,
-                                    ),
-                                    SizedBox(height: isMobile ? 18 : 24),
-                                    _MonthlyInsightCard(
-                                      currentMonthLabel:
-                                          _monthFormatter.format(currentMonth),
-                                      previousMonthLabel:
-                                          _monthFormatter.format(previousMonth),
-                                      currentMonthExpenses:
-                                          currentMonthExpenses,
-                                      previousMonthExpenses:
-                                          previousMonthExpenses,
-                                      averagePastExpenses: averagePastExpenses,
-                                      expensesDifference: expensesDifference,
-                                      expensesDifferencePercent:
-                                          expensesDifferencePercent,
-                                      currentMonthBalance:
-                                          currentMonthBalance,
-                                      previousMonthBalance:
-                                          previousMonthBalance,
-                                      currentMonthBudgetExpected:
-                                          currentMonthBudgetExpected,
-                                      currencyFormatter: _currencyFormatter,
-                                    ),
-                                    SizedBox(height: isMobile ? 18 : 24),
-                                    _SummaryGrid(
-                                      currentMonthIncomes: currentMonthIncomes,
-                                      currentMonthExpenses:
-                                          currentMonthExpenses,
-                                      currentMonthBalance:
-                                          currentMonthBalance,
-                                      activeGoals: activeGoals,
-                                      expenseCountCurrentMonth:
-                                          expenseCountCurrentMonth,
-                                      currencyFormatter: _currencyFormatter,
-                                    ),
-                                    SizedBox(height: isMobile ? 20 : 28),
-                                    _MonthlyTrendChart(
-                                      summaries: monthlySummaries,
-                                      currencyFormatter: _currencyFormatter,
-                                    ),
-                                    SizedBox(height: isMobile ? 20 : 28),
-                                    if (isWide)
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Expanded(
-                                            child: _ExpensesList(
-                                              items:
-                                                  currentMonthExpenseItems,
-                                              currencyFormatter:
-                                                  _currencyFormatter,
-                                              dateFormatter: _dateFormatter,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 18),
-                                          Expanded(
-                                            child: _GoalsList(
-                                              snapshot: goalsDocs,
-                                              currencyFormatter:
-                                                  _currencyFormatter,
-                                              dateFormatter: _dateFormatter,
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                    else
-                                      Column(
-                                        children: [
-                                          _ExpensesList(
-                                            items: currentMonthExpenseItems,
-                                            currencyFormatter:
-                                                _currencyFormatter,
-                                            dateFormatter: _dateFormatter,
-                                          ),
-                                          const SizedBox(height: 18),
-                                          _GoalsList(
-                                            snapshot: goalsDocs,
-                                            currencyFormatter:
-                                                _currencyFormatter,
-                                            dateFormatter: _dateFormatter,
-                                          ),
-                                        ],
-                                      ),
-                                  ],
+                          final currentMonthExpenseItems =
+                              _expensePreviewItemsForCurrentMonth(expensesDocs);
+
+                          final isLoading = incomesSnapshot.connectionState ==
+                                  ConnectionState.waiting ||
+                              expensesSnapshot.connectionState ==
+                                  ConnectionState.waiting ||
+                              goalsSnapshot.connectionState ==
+                                  ConnectionState.waiting ||
+                              bankAccountsSnapshot.connectionState ==
+                                  ConnectionState.waiting;
+
+                          return LayoutBuilder(
+                            builder: (context, constraints) {
+                              final isMobile = constraints.maxWidth < 700;
+                              final isWide = constraints.maxWidth >= 950;
+
+                              return SingleChildScrollView(
+                                physics: const BouncingScrollPhysics(),
+                                padding: EdgeInsets.fromLTRB(
+                                  isMobile ? 16 : 24,
+                                  isMobile ? 16 : 24,
+                                  isMobile ? 16 : 24,
+                                  isMobile ? 120 : 36,
                                 ),
-                              ),
-                            ),
+                                child: Center(
+                                  child: ConstrainedBox(
+                                    constraints:
+                                        const BoxConstraints(maxWidth: 1200),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _HeaderSection(
+                                          name: name.toString(),
+                                          currentMonthLabel: _monthFormatter
+                                              .format(currentMonth),
+                                          onAddIncome: () =>
+                                              _showAddIncomeDialog(
+                                            bankAccounts: bankAccounts,
+                                          ),
+                                          onAddExpense: _showAddExpenseDialog,
+                                          onAddGoal: _showAddGoalDialog,
+                                        ),
+                                        SizedBox(height: isMobile ? 18 : 24),
+                                        if (isLoading)
+                                          Center(
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(24),
+                                              child:
+                                                  CircularProgressIndicator(
+                                                color: colors.primary,
+                                              ),
+                                            ),
+                                          ),
+                                        _MonthlyInsightCard(
+                                          currentMonthLabel: _monthFormatter
+                                              .format(currentMonth),
+                                          previousMonthLabel: _monthFormatter
+                                              .format(previousMonth),
+                                          currentMonthExpenses:
+                                              currentMonthExpenses,
+                                          previousMonthExpenses:
+                                              previousMonthExpenses,
+                                          averagePastExpenses:
+                                              averagePastExpenses,
+                                          expensesDifference:
+                                              expensesDifference,
+                                          expensesDifferencePercent:
+                                              expensesDifferencePercent,
+                                          currentMonthBalance:
+                                              currentMonthBalance,
+                                          previousMonthBalance:
+                                              previousMonthBalance,
+                                          currentMonthBudgetExpected:
+                                              currentMonthBudgetExpected,
+                                          totalBankBalance: totalBankBalance,
+                                          currencyFormatter:
+                                              _currencyFormatter,
+                                        ),
+                                        SizedBox(height: isMobile ? 18 : 24),
+                                        _SummaryGrid(
+                                          currentMonthIncomes:
+                                              currentMonthIncomes,
+                                          currentMonthExpenses:
+                                              currentMonthExpenses,
+                                          currentMonthBalance:
+                                              currentMonthBalance,
+                                          totalBankBalance: totalBankBalance,
+                                          activeGoals: activeGoals,
+                                          expenseCountCurrentMonth:
+                                              expenseCountCurrentMonth,
+                                          currencyFormatter:
+                                              _currencyFormatter,
+                                        ),
+                                        SizedBox(height: isMobile ? 20 : 28),
+                                        _BankAccountsDashboardPanel(
+                                          bankAccounts: bankAccounts,
+                                          totalBankBalance: totalBankBalance,
+                                          currencyFormatter:
+                                              _currencyFormatter,
+                                        ),
+                                        SizedBox(height: isMobile ? 20 : 28),
+                                        _MonthlyTrendChart(
+                                          summaries: monthlySummaries,
+                                          currencyFormatter:
+                                              _currencyFormatter,
+                                        ),
+                                        SizedBox(height: isMobile ? 20 : 28),
+                                        if (isWide)
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: _ExpensesList(
+                                                  items:
+                                                      currentMonthExpenseItems,
+                                                  currencyFormatter:
+                                                      _currencyFormatter,
+                                                  dateFormatter:
+                                                      _dateFormatter,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 18),
+                                              Expanded(
+                                                child: _GoalsList(
+                                                  snapshot: goalsDocs,
+                                                  currencyFormatter:
+                                                      _currencyFormatter,
+                                                  dateFormatter:
+                                                      _dateFormatter,
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        else
+                                          Column(
+                                            children: [
+                                              _ExpensesList(
+                                                items:
+                                                    currentMonthExpenseItems,
+                                                currencyFormatter:
+                                                    _currencyFormatter,
+                                                dateFormatter:
+                                                    _dateFormatter,
+                                              ),
+                                              const SizedBox(height: 18),
+                                              _GoalsList(
+                                                snapshot: goalsDocs,
+                                                currencyFormatter:
+                                                    _currencyFormatter,
+                                                dateFormatter:
+                                                    _dateFormatter,
+                                              ),
+                                            ],
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
                       );
@@ -617,6 +719,103 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
     );
   }
+}
+
+class _DashboardColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color headerBackground;
+  final Color headerText;
+  final Color headerMuted;
+  final Color shadow;
+
+  const _DashboardColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.headerBackground,
+    required this.headerText,
+    required this.headerMuted,
+    required this.shadow,
+  });
+
+  factory _DashboardColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _DashboardColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        headerBackground: Color(0xFF020617),
+        headerText: Colors.white,
+        headerMuted: Color(0xFFCBD5E1),
+        shadow: Colors.black,
+      );
+    }
+
+    return const _DashboardColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF7FAFE),
+      cardSofter: Color(0xFFF3F6FB),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      headerBackground: Color(0xFF172033),
+      headerText: Colors.white,
+      headerMuted: Color(0xFFD7DEE9),
+      shadow: Colors.black,
+    );
+  }
+}
+
+BoxDecoration _dashboardCardDecoration(BuildContext context) {
+  final colors = _DashboardColors.of(context);
+
+  return BoxDecoration(
+    color: colors.card,
+    borderRadius: BorderRadius.circular(26),
+    border: Border.all(
+      color: colors.border,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
+        blurRadius: colors.isDark ? 22 : 16,
+        offset: const Offset(0, 10),
+      ),
+    ],
+  );
 }
 
 class _MonthlySummaryItem {
@@ -653,6 +852,18 @@ class _ExpensePreviewItem {
   });
 }
 
+class _BankAccountDashboardItem {
+  final String id;
+  final String name;
+  final double balance;
+
+  const _BankAccountDashboardItem({
+    required this.id,
+    required this.name,
+    required this.balance,
+  });
+}
+
 class _HeaderSection extends StatelessWidget {
   final String name;
   final String currentMonthLabel;
@@ -670,6 +881,7 @@ class _HeaderSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -677,11 +889,11 @@ class _HeaderSection extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 22 : 28),
       decoration: BoxDecoration(
-        color: const Color(0xFF172033),
+        color: colors.headerBackground,
         borderRadius: BorderRadius.circular(isMobile ? 26 : 30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.10),
+            color: colors.shadow.withValues(alpha: colors.isDark ? 0.24 : 0.10),
             blurRadius: 24,
             offset: const Offset(0, 14),
           ),
@@ -740,13 +952,15 @@ class _HeaderText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Ciao $name 👋',
           style: TextStyle(
-            color: Colors.white,
+            color: colors.headerText,
             fontSize: isMobile ? 26 : 32,
             fontWeight: FontWeight.w900,
             height: 1.1,
@@ -754,9 +968,9 @@ class _HeaderText extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'Riepilogo di ${currentMonthLabel.toUpperCase()}: controlla entrate, spese reali, budget consumati e andamento degli ultimi mesi.',
+          'Riepilogo di ${currentMonthLabel.toUpperCase()}: controlla entrate, spese, conti bancari e andamento degli ultimi mesi.',
           style: TextStyle(
-            color: const Color(0xFFD7DEE9),
+            color: colors.headerMuted,
             fontSize: isMobile ? 15 : 16,
             height: 1.45,
           ),
@@ -856,6 +1070,8 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return SizedBox(
       width: fullWidth ? double.infinity : null,
       height: 48,
@@ -864,8 +1080,9 @@ class _ActionButton extends StatelessWidget {
         icon: Icon(icon, size: 20),
         label: Text(label),
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xFF172033),
+          backgroundColor: colors.isDark ? colors.primary : Colors.white,
+          foregroundColor:
+              colors.isDark ? const Color(0xFF0F172A) : const Color(0xFF172033),
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           shape: RoundedRectangleBorder(
@@ -891,6 +1108,7 @@ class _MonthlyInsightCard extends StatelessWidget {
   final double currentMonthBalance;
   final double previousMonthBalance;
   final double currentMonthBudgetExpected;
+  final double totalBankBalance;
   final NumberFormat currencyFormatter;
 
   const _MonthlyInsightCard({
@@ -904,11 +1122,13 @@ class _MonthlyInsightCard extends StatelessWidget {
     required this.currentMonthBalance,
     required this.previousMonthBalance,
     required this.currentMonthBudgetExpected,
+    required this.totalBankBalance,
     required this.currencyFormatter,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -948,6 +1168,11 @@ class _MonthlyInsightCard extends StatelessWidget {
       }
     }
 
+    if (currentMonthBalance < 0 && totalBankBalance > 0) {
+      comparisonText +=
+          ' Il saldo del mese è negativo, ma hai ${currencyFormatter.format(totalBankBalance)} nei conti registrati: puoi coprire la differenza, però stai usando liquidità già disponibile.';
+    }
+
     final percentText = expensesDifferencePercent == null
         ? 'N/D'
         : '${expensesDifferencePercent!.abs().toStringAsFixed(1)}%';
@@ -957,20 +1182,7 @@ class _MonthlyInsightCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 18 : 22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
+      decoration: _dashboardCardDecoration(context),
       child: isMobile
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -982,8 +1194,8 @@ class _MonthlyInsightCard extends StatelessWidget {
                 const SizedBox(height: 16),
                 Text(
                   comparisonText,
-                  style: const TextStyle(
-                    color: Color(0xFF172033),
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                     height: 1.35,
@@ -999,6 +1211,7 @@ class _MonthlyInsightCard extends StatelessWidget {
                   percentText: percentText,
                   balanceDifference: balanceDifference,
                   currentMonthBudgetExpected: currentMonthBudgetExpected,
+                  totalBankBalance: totalBankBalance,
                   currencyFormatter: currencyFormatter,
                   isMobile: true,
                 ),
@@ -1017,8 +1230,8 @@ class _MonthlyInsightCard extends StatelessWidget {
                       const SizedBox(height: 14),
                       Text(
                         comparisonText,
-                        style: const TextStyle(
-                          color: Color(0xFF172033),
+                        style: TextStyle(
+                          color: colors.textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 17,
                           height: 1.35,
@@ -1039,6 +1252,7 @@ class _MonthlyInsightCard extends StatelessWidget {
                     percentText: percentText,
                     balanceDifference: balanceDifference,
                     currentMonthBudgetExpected: currentMonthBudgetExpected,
+                    totalBankBalance: totalBankBalance,
                     currencyFormatter: currencyFormatter,
                     isMobile: false,
                   ),
@@ -1060,11 +1274,13 @@ class _InsightHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     final color = isSpendingMore
         ? const Color(0xFFDC2626)
         : isSpendingLess
             ? const Color(0xFF16A34A)
-            : const Color(0xFF1677F2);
+            : colors.primary;
 
     final icon = isSpendingMore
         ? Icons.trending_up_rounded
@@ -1084,7 +1300,7 @@ class _InsightHeader extends StatelessWidget {
           width: 48,
           height: 48,
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.10),
+            color: color.withValues(alpha: colors.isDark ? 0.18 : 0.10),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Icon(
@@ -1096,8 +1312,8 @@ class _InsightHeader extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
-              color: Color(0xFF172033),
+            style: TextStyle(
+              color: colors.textPrimary,
               fontSize: 21,
               fontWeight: FontWeight.w900,
             ),
@@ -1117,6 +1333,7 @@ class _InsightStats extends StatelessWidget {
   final String percentText;
   final double balanceDifference;
   final double currentMonthBudgetExpected;
+  final double totalBankBalance;
   final NumberFormat currencyFormatter;
   final bool isMobile;
 
@@ -1129,6 +1346,7 @@ class _InsightStats extends StatelessWidget {
     required this.percentText,
     required this.balanceDifference,
     required this.currentMonthBudgetExpected,
+    required this.totalBankBalance,
     required this.currencyFormatter,
     required this.isMobile,
   });
@@ -1157,8 +1375,8 @@ class _InsightStats extends StatelessWidget {
         value: currencyFormatter.format(currentMonthBudgetExpected),
       ),
       _SmallInsightBox(
-        label: 'Saldo vs mese scorso',
-        value: currencyFormatter.format(balanceDifference),
+        label: 'Totale conti',
+        value: currencyFormatter.format(totalBankBalance),
       ),
     ];
 
@@ -1211,6 +1429,7 @@ class _SmallInsightBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -1218,10 +1437,10 @@ class _SmallInsightBox extends StatelessWidget {
       width: isMobile ? double.infinity : 145,
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1231,8 +1450,8 @@ class _SmallInsightBox extends StatelessWidget {
             label.toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
               fontSize: 10,
               fontWeight: FontWeight.w900,
             ),
@@ -1242,8 +1461,8 @@ class _SmallInsightBox extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF172033),
+            style: TextStyle(
+              color: colors.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w900,
             ),
@@ -1258,6 +1477,7 @@ class _SummaryGrid extends StatelessWidget {
   final double currentMonthIncomes;
   final double currentMonthExpenses;
   final double currentMonthBalance;
+  final double totalBankBalance;
   final int activeGoals;
   final int expenseCountCurrentMonth;
   final NumberFormat currencyFormatter;
@@ -1266,6 +1486,7 @@ class _SummaryGrid extends StatelessWidget {
     required this.currentMonthIncomes,
     required this.currentMonthExpenses,
     required this.currentMonthBalance,
+    required this.totalBankBalance,
     required this.activeGoals,
     required this.expenseCountCurrentMonth,
     required this.currencyFormatter,
@@ -1296,6 +1517,12 @@ class _SummaryGrid extends StatelessWidget {
         subtitle: currentMonthBalance >= 0
             ? 'Situazione positiva'
             : 'Uscite superiori alle entrate',
+      ),
+      _SummaryCard(
+        icon: Icons.account_balance_rounded,
+        title: 'Totale conti',
+        value: currencyFormatter.format(totalBankBalance),
+        subtitle: 'Soldi disponibili in banca',
       ),
       _SummaryCard(
         icon: Icons.flag_rounded,
@@ -1348,20 +1575,7 @@ class _SummaryCard extends StatelessWidget {
       width: isMobile ? double.infinity : 280,
       child: Container(
         padding: EdgeInsets.all(isMobile ? 18 : 22),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: const Color(0xFFE5ECF5),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
+        decoration: _dashboardCardDecoration(context),
         child: isMobile
             ? Row(
                 children: [
@@ -1404,16 +1618,18 @@ class _SummaryIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Container(
       width: 52,
       height: 52,
       decoration: BoxDecoration(
-        color: const Color(0xFFE3F2FD),
+        color: colors.primarySoft,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Icon(
         icon,
-        color: const Color(0xFF1E88E5),
+        color: colors.primary,
         size: 28,
       ),
     );
@@ -1435,13 +1651,15 @@ class _SummaryText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
-          style: const TextStyle(
-            color: Color(0xFF6B7280),
+          style: TextStyle(
+            color: colors.textSecondary,
             fontWeight: FontWeight.w800,
             fontSize: 13,
           ),
@@ -1454,18 +1672,188 @@ class _SummaryText extends StatelessWidget {
           style: TextStyle(
             fontSize: compact ? 22 : 25,
             fontWeight: FontWeight.w900,
-            color: const Color(0xFF172033),
+            color: colors.textPrimary,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           subtitle,
-          style: const TextStyle(
-            color: Color(0xFF7C8798),
+          style: TextStyle(
+            color: colors.textMuted,
             fontSize: 13,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _BankAccountsDashboardPanel extends StatelessWidget {
+  final List<_BankAccountDashboardItem> bankAccounts;
+  final double totalBankBalance;
+  final NumberFormat currencyFormatter;
+
+  const _BankAccountsDashboardPanel({
+    required this.bankAccounts,
+    required this.totalBankBalance,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return _Panel(
+      title: 'I tuoi conti',
+      icon: Icons.account_balance_rounded,
+      child: bankAccounts.isEmpty
+          ? const _EmptyState(
+              text:
+                  'Nessun conto inserito. Vai nella pagina Entrate e aggiungi il saldo che hai già in banca.',
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colors.cardSoft,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: colors.border,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: colors.isDark
+                              ? const Color(0xFF052E16)
+                              : const Color(0xFFEAF8EF),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(
+                          Icons.savings_rounded,
+                          color: Color(0xFF16A34A),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Totale disponibile',
+                              style: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              currencyFormatter.format(totalBankBalance),
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 24,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: bankAccounts.map((account) {
+                    return _BankAccountMiniCard(
+                      account: account,
+                      currencyFormatter: currencyFormatter,
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _BankAccountMiniCard extends StatelessWidget {
+  final _BankAccountDashboardItem account;
+  final NumberFormat currencyFormatter;
+
+  const _BankAccountMiniCard({
+    required this.account,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    return Container(
+      width: isMobile ? double.infinity : 250,
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: colors.cardSoft,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: colors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: colors.primarySoft,
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              Icons.account_balance_wallet_rounded,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  account.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  currencyFormatter.format(account.balance),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF16A34A),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1481,6 +1869,7 @@ class _MonthlyTrendChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -1493,7 +1882,7 @@ class _MonthlyTrendChart extends StatelessWidget {
           Text(
             'Asse X: mesi • Asse Y: importi in euro',
             style: TextStyle(
-              color: const Color(0xFF64748B),
+              color: colors.textSecondary,
               fontSize: isMobile ? 13 : 14,
               fontWeight: FontWeight.w700,
             ),
@@ -1506,6 +1895,7 @@ class _MonthlyTrendChart extends StatelessWidget {
               painter: _MonthlyTrendChartPainter(
                 summaries: summaries,
                 currencyFormatter: currencyFormatter,
+                isDark: colors.isDark,
               ),
             ),
           ),
@@ -1533,15 +1923,18 @@ class _MonthlyTrendChart extends StatelessWidget {
 class _MonthlyTrendChartPainter extends CustomPainter {
   final List<_MonthlySummaryItem> summaries;
   final NumberFormat currencyFormatter;
+  final bool isDark;
 
   _MonthlyTrendChartPainter({
     required this.summaries,
     required this.currencyFormatter,
+    required this.isDark,
   });
 
-  static const Color _axisColor = Color(0xFFCBD5E1);
-  static const Color _gridColor = Color(0xFFEAF0F7);
-  static const Color _labelColor = Color(0xFF64748B);
+  Color get _axisColor => isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1);
+  Color get _gridColor => isDark ? const Color(0xFF334155) : const Color(0xFFEAF0F7);
+  Color get _labelColor => isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B);
+
   static const Color _incomeColor = Color(0xFF16A34A);
   static const Color _expenseColor = Color(0xFFDC2626);
 
@@ -1678,8 +2071,7 @@ class _MonthlyTrendChartPainter extends CustomPainter {
 
       final x = summaries.length == 1
           ? chartRect.center.dx
-          : chartRect.left +
-              (chartRect.width / (summaries.length - 1)) * index;
+          : chartRect.left + (chartRect.width / (summaries.length - 1)) * index;
 
       final normalizedValue = maxValue <= 0
           ? 0.0
@@ -1720,7 +2112,7 @@ class _MonthlyTrendChartPainter extends CustomPainter {
     required Color color,
   }) {
     final outerPaint = Paint()
-      ..color = Colors.white
+      ..color = isDark ? const Color(0xFF172033) : Colors.white
       ..style = PaintingStyle.fill;
 
     final innerPaint = Paint()
@@ -1797,7 +2189,7 @@ class _MonthlyTrendChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MonthlyTrendChartPainter oldDelegate) {
-    return oldDelegate.summaries != summaries;
+    return oldDelegate.summaries != summaries || oldDelegate.isDark != isDark;
   }
 }
 
@@ -1812,6 +2204,8 @@ class _ChartLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1826,8 +2220,8 @@ class _ChartLegend extends StatelessWidget {
         const SizedBox(width: 6),
         Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
+          style: TextStyle(
+            color: colors.textSecondary,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -1879,8 +2273,17 @@ class _GoalsList extends StatelessWidget {
     required this.dateFormatter,
   });
 
+  double _amountFrom(dynamic value) {
+    if (value is int) return value.toDouble();
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+
+    return 0;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final docs = snapshot?.docs ?? [];
 
     return _Panel(
@@ -1893,24 +2296,8 @@ class _GoalsList extends StatelessWidget {
                 final data = doc.data();
 
                 final title = data['title'] ?? 'Obiettivo';
-
-                final rawTarget = data['target_amount'];
-                final target = rawTarget is int
-                    ? rawTarget.toDouble()
-                    : rawTarget is double
-                        ? rawTarget
-                        : rawTarget is num
-                            ? rawTarget.toDouble()
-                            : 0.0;
-
-                final rawCurrent = data['current_amount'];
-                final current = rawCurrent is int
-                    ? rawCurrent.toDouble()
-                    : rawCurrent is double
-                        ? rawCurrent
-                        : rawCurrent is num
-                            ? rawCurrent.toDouble()
-                            : 0.0;
+                final target = _amountFrom(data['target_amount']);
+                final current = _amountFrom(data['current_amount']);
 
                 final deadlineRaw = data['deadline'];
                 final deadline = deadlineRaw is Timestamp
@@ -1937,8 +2324,8 @@ class _GoalsList extends StatelessWidget {
                         child: LinearProgressIndicator(
                           value: progress,
                           minHeight: 8,
-                          backgroundColor: const Color(0xFFE5ECF5),
-                          color: const Color(0xFF1E88E5),
+                          backgroundColor: colors.border,
+                          color: colors.primary,
                         ),
                       ),
                     ],
@@ -1963,26 +2350,14 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 18 : 22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
+      decoration: _dashboardCardDecoration(context),
       child: Column(
         children: [
           Row(
@@ -1991,12 +2366,12 @@ class _Panel extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE3F2FD),
+                  color: colors.primarySoft,
                   borderRadius: BorderRadius.circular(15),
                 ),
                 child: Icon(
                   icon,
-                  color: const Color(0xFF1E88E5),
+                  color: colors.primary,
                   size: 23,
                 ),
               ),
@@ -2007,7 +2382,7 @@ class _Panel extends StatelessWidget {
                   style: TextStyle(
                     fontSize: isMobile ? 19 : 20,
                     fontWeight: FontWeight.w900,
-                    color: const Color(0xFF172033),
+                    color: colors.textPrimary,
                   ),
                 ),
               ),
@@ -2034,6 +2409,7 @@ class _ListRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -2041,10 +2417,10 @@ class _ListRow extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isMobile ? 14 : 16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFFEAF0F7),
+          color: colors.border,
         ),
       ),
       child: isMobile
@@ -2053,16 +2429,16 @@ class _ListRow extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
+                    color: colors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 5),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF6B7280),
+                  style: TextStyle(
+                    color: colors.textSecondary,
                     height: 1.35,
                     fontSize: 13,
                   ),
@@ -2070,9 +2446,9 @@ class _ListRow extends StatelessWidget {
                 const SizedBox(height: 10),
                 Text(
                   trailing,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF1E88E5),
+                    color: colors.primary,
                     fontSize: 16,
                   ),
                 ),
@@ -2086,16 +2462,16 @@ class _ListRow extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF172033),
+                          color: colors.textPrimary,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
-                        style: const TextStyle(
-                          color: Color(0xFF6B7280),
+                        style: TextStyle(
+                          color: colors.textSecondary,
                         ),
                       ),
                     ],
@@ -2104,7 +2480,8 @@ class _ListRow extends StatelessWidget {
                 const SizedBox(width: 12),
                 Text(
                   trailing,
-                  style: const TextStyle(
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -2123,21 +2500,23 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFEAF0F7),
+          color: colors.border,
         ),
       ),
       child: Text(
         text,
         textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Color(0xFF6B7280),
+        style: TextStyle(
+          color: colors.textSecondary,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -2147,9 +2526,11 @@ class _EmptyState extends StatelessWidget {
 
 class _AddIncomeDialog extends StatefulWidget {
   final FinanceService financeService;
+  final List<_BankAccountDashboardItem> bankAccounts;
 
   const _AddIncomeDialog({
     required this.financeService,
+    required this.bankAccounts,
   });
 
   @override
@@ -2162,6 +2543,7 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
   final _amountController = TextEditingController();
 
   DateTime _selectedDate = DateTime.now();
+  String? _selectedBankAccountId;
   bool _loading = false;
 
   @override
@@ -2171,12 +2553,46 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
     super.dispose();
   }
 
+  String? _selectedBankAccountName() {
+    if (_selectedBankAccountId == null) return null;
+
+    for (final account in widget.bankAccounts) {
+      if (account.id == _selectedBankAccountId) {
+        return account.name;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _pickDate() async {
+    final colors = _DashboardColors.of(context);
+
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: colors.isDark
+                ? const ColorScheme.dark(
+                    primary: Color(0xFF60A5FA),
+                    onPrimary: Color(0xFF0F172A),
+                    surface: Color(0xFF172033),
+                    onSurface: Color(0xFFF8FAFC),
+                  )
+                : const ColorScheme.light(
+                    primary: Color(0xFF1677F2),
+                    onPrimary: Colors.white,
+                    surface: Colors.white,
+                    onSurface: Color(0xFF172033),
+                  ),
+          ),
+          child: child!,
+        );
+      },
     );
 
     if (picked != null) {
@@ -2199,6 +2615,8 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
       title: _titleController.text.trim(),
       amount: amount,
       date: _selectedDate,
+      bankAccountId: _selectedBankAccountId,
+      bankAccountName: _selectedBankAccountName(),
     );
 
     if (mounted) Navigator.pop(context);
@@ -2229,6 +2647,16 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
               ),
             ),
             const SizedBox(height: 12),
+            _BankAccountDropdown(
+              bankAccounts: widget.bankAccounts,
+              selectedBankAccountId: _selectedBankAccountId,
+              onChanged: (value) {
+                setState(() {
+                  _selectedBankAccountId = value;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
             _DateButton(
               label: 'Data entrata',
               date: _selectedDate,
@@ -2237,6 +2665,64 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _BankAccountDropdown extends StatelessWidget {
+  final List<_BankAccountDashboardItem> bankAccounts;
+  final String? selectedBankAccountId;
+  final ValueChanged<String?> onChanged;
+
+  const _BankAccountDropdown({
+    required this.bankAccounts,
+    required this.selectedBankAccountId,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+    final formatter = NumberFormat.currency(
+      locale: 'it_IT',
+      symbol: '€',
+    );
+
+    return DropdownButtonFormField<String?>(
+      value: selectedBankAccountId,
+      dropdownColor: colors.card,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: _inputDecoration(
+        context: context,
+        label: 'Conto bancario',
+      ),
+      items: [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(
+            'Non collegare a nessun conto',
+            style: TextStyle(
+              color: colors.textPrimary,
+            ),
+          ),
+        ),
+        ...bankAccounts.map((account) {
+          return DropdownMenuItem<String?>(
+            value: account.id,
+            child: Text(
+              '${account.name} · ${formatter.format(account.balance)}',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.textPrimary,
+              ),
+            ),
+          );
+        }),
+      ],
+      onChanged: onChanged,
     );
   }
 }
@@ -2281,7 +2767,7 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
   }
 
   Future<void> _pickDueDate() async {
-    final picked = await showDatePicker(
+    final picked = await _showDashboardDatePicker(
       context: context,
       initialDate: _selectedDueDate,
       firstDate: DateTime(2020),
@@ -2296,7 +2782,7 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
   }
 
   Future<void> _pickMonth() async {
-    final picked = await showDatePicker(
+    final picked = await _showDashboardDatePicker(
       context: context,
       initialDate: _selectedMonth,
       firstDate: DateTime(2020),
@@ -2435,6 +2921,7 @@ class _ExpenseTypeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final isStandard = selectedType == DashboardExpenseType.standard;
     final isPlanned = selectedType == DashboardExpenseType.planned;
 
@@ -2442,10 +2929,10 @@ class _ExpenseTypeSelector extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Row(
@@ -2488,16 +2975,20 @@ class _TypeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       height: 46,
       decoration: BoxDecoration(
-        color: selected ? Colors.white : Colors.transparent,
+        color: selected ? colors.card : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         boxShadow: selected
             ? [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
+                  color: colors.shadow.withValues(
+                    alpha: colors.isDark ? 0.18 : 0.04,
+                  ),
                   blurRadius: 12,
                   offset: const Offset(0, 6),
                 ),
@@ -2513,8 +3004,7 @@ class _TypeButton extends StatelessWidget {
             Icon(
               icon,
               size: 18,
-              color:
-                  selected ? const Color(0xFF1677F2) : const Color(0xFF64748B),
+              color: selected ? colors.primary : colors.textSecondary,
             ),
             const SizedBox(width: 7),
             Flexible(
@@ -2523,9 +3013,7 @@ class _TypeButton extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: selected
-                      ? const Color(0xFF172033)
-                      : const Color(0xFF64748B),
+                  color: selected ? colors.textPrimary : colors.textSecondary,
                   fontWeight: FontWeight.w900,
                   fontSize: 13,
                 ),
@@ -2567,7 +3055,7 @@ class _AddGoalDialogState extends State<_AddGoalDialog> {
   }
 
   Future<void> _pickDeadline() async {
-    final picked = await showDatePicker(
+    final picked = await _showDashboardDatePicker(
       context: context,
       initialDate: _selectedDeadline,
       firstDate: DateTime.now(),
@@ -2665,6 +3153,7 @@ class _BaseDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
@@ -2682,7 +3171,7 @@ class _BaseDialog extends StatelessWidget {
           isMobile ? 20 : 24,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.card,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(isMobile ? 28 : 24),
             bottom: Radius.circular(isMobile ? 0 : 24),
@@ -2700,7 +3189,7 @@ class _BaseDialog extends StatelessWidget {
                     width: 42,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD7DEE9),
+                      color: colors.border,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -2711,16 +3200,19 @@ class _BaseDialog extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 23,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF172033),
+                          color: colors.textPrimary,
                         ),
                       ),
                     ),
                     IconButton(
                       onPressed: loading ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.close_rounded),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: colors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -2736,9 +3228,9 @@ class _BaseDialog extends StatelessWidget {
                           onPressed:
                               loading ? null : () => Navigator.pop(context),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF172033),
-                            side: const BorderSide(
-                              color: Color(0xFFE5ECF5),
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(
+                              color: colors.border,
                             ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -2758,8 +3250,10 @@ class _BaseDialog extends StatelessWidget {
                         child: ElevatedButton(
                           onPressed: loading ? null : onSave,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1677F2),
-                            foregroundColor: Colors.white,
+                            backgroundColor: colors.primary,
+                            foregroundColor: colors.isDark
+                                ? const Color(0xFF0F172A)
+                                : Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -2769,12 +3263,14 @@ class _BaseDialog extends StatelessWidget {
                             ),
                           ),
                           child: loading
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: colors.isDark
+                                        ? const Color(0xFF0F172A)
+                                        : Colors.white,
                                   ),
                                 )
                               : const Text('Salva'),
@@ -2807,32 +3303,18 @@ class _TextInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
-      decoration: InputDecoration(
-        labelText: label,
-        filled: true,
-        fillColor: const Color(0xFFF7FAFE),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFF1677F2),
-            width: 1.5,
-          ),
-        ),
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: _inputDecoration(
+        context: context,
+        label: label,
       ),
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
@@ -2877,35 +3359,23 @@ class _DateButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
     final formattedDate = DateFormat(displayFormat, 'it_IT').format(date);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: const Color(0xFFF7FAFE),
-          suffixIcon: const Icon(Icons.calendar_month_rounded),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
+        decoration: _inputDecoration(
+          context: context,
+          label: label,
+          suffixIcon: Icons.calendar_month_rounded,
         ),
         child: Text(
           formattedDate,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF172033),
+            color: colors.textPrimary,
           ),
         ),
       ),
@@ -2926,13 +3396,15 @@ class _SwitchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
     return Container(
       padding: const EdgeInsets.only(left: 14, right: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: SwitchListTile(
@@ -2941,13 +3413,107 @@ class _SwitchTile extends StatelessWidget {
         contentPadding: EdgeInsets.zero,
         title: Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF172033),
+            color: colors.textPrimary,
           ),
         ),
-        activeColor: const Color(0xFF1677F2),
+        activeColor: colors.primary,
       ),
     );
   }
+}
+
+InputDecoration _inputDecoration({
+  required BuildContext context,
+  required String label,
+  IconData? suffixIcon,
+}) {
+  final colors = _DashboardColors.of(context);
+
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(
+      color: colors.textSecondary,
+      fontWeight: FontWeight.w700,
+    ),
+    suffixIcon: suffixIcon == null
+        ? null
+        : Icon(
+            suffixIcon,
+            color: colors.textSecondary,
+          ),
+    filled: true,
+    fillColor: colors.cardSoft,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.primary,
+        width: 1.5,
+      ),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+      ),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+        width: 1.5,
+      ),
+    ),
+  );
+}
+
+Future<DateTime?> _showDashboardDatePicker({
+  required BuildContext context,
+  required DateTime initialDate,
+  required DateTime firstDate,
+  required DateTime lastDate,
+  String? helpText,
+}) async {
+  final colors = _DashboardColors.of(context);
+
+  return showDatePicker(
+    context: context,
+    initialDate: initialDate,
+    firstDate: firstDate,
+    lastDate: lastDate,
+    helpText: helpText,
+    builder: (context, child) {
+      return Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: colors.isDark
+              ? const ColorScheme.dark(
+                  primary: Color(0xFF60A5FA),
+                  onPrimary: Color(0xFF0F172A),
+                  surface: Color(0xFF172033),
+                  onSurface: Color(0xFFF8FAFC),
+                )
+              : const ColorScheme.light(
+                  primary: Color(0xFF1677F2),
+                  onPrimary: Colors.white,
+                  surface: Colors.white,
+                  onSurface: Color(0xFF172033),
+                ),
+        ),
+        child: child!,
+      );
+    },
+  );
 }

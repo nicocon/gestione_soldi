@@ -82,10 +82,174 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   List<Map<String, dynamic>> _listOfMaps(dynamic value) {
     if (value is! List) return [];
 
-    return value
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    return value.whereType<Map>().map((item) {
+      return Map<String, dynamic>.from(item);
+    }).toList();
+  }
+
+  String _normalizeQuestion(String value) {
+    var text = value.toLowerCase().trim();
+
+    const replacements = {
+      'à': 'a',
+      'è': 'e',
+      'é': 'e',
+      'ì': 'i',
+      'ò': 'o',
+      'ù': 'u',
+    };
+
+    replacements.forEach((from, to) {
+      text = text.replaceAll(from, to);
+    });
+
+    text = text.replaceAll(RegExp(r'\s+'), ' ');
+
+    return text;
+  }
+
+  bool _containsAny(String text, List<String> words) {
+    return words.any(text.contains);
+  }
+
+  bool _isGreetingOrSmallTalk(String text) {
+    final cleaned = text
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final greetings = [
+      'ciao',
+      'hey',
+      'ehi',
+      'salve',
+      'buongiorno',
+      'buona sera',
+      'buonasera',
+      'buon pomeriggio',
+      'hello',
+      'hi',
+    ];
+
+    if (greetings.contains(cleaned)) return true;
+
+    if (cleaned.split(' ').length <= 4 && _containsAny(cleaned, greetings)) {
+      return true;
+    }
+
+    final smallTalk = [
+      'come stai',
+      'tutto bene',
+      'che fai',
+      'chi sei',
+      'cosa fai',
+      'mi aiuti',
+      'puoi aiutarmi',
+      'aiutami',
+    ];
+
+    return _containsAny(cleaned, smallTalk);
+  }
+
+  bool _isClearlyInvalidText(String text) {
+    final compact = text.replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+    if (compact.length < 2) return true;
+
+    if (RegExp(r'^(.)\1{5,}$').hasMatch(compact)) {
+      return true;
+    }
+
+    final onlyNumbers = RegExp(r'^[0-9]+$').hasMatch(compact);
+    if (onlyNumbers && compact.length < 4) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool _hasFinancialIntent(String text) {
+    final financialWords = [
+      'soldi',
+      'spesa',
+      'spese',
+      'spendo',
+      'spendere',
+      'speso',
+      'uscita',
+      'uscite',
+      'entrata',
+      'entrate',
+      'stipendio',
+      'budget',
+      'risparmio',
+      'risparmiare',
+      'risparmiato',
+      'euro',
+      '€',
+      'mese',
+      'mensile',
+      'giorno',
+      'giornaliero',
+      'settimana',
+      'pagare',
+      'pagato',
+      'pagamento',
+      'bolletta',
+      'bollette',
+      'affitto',
+      'mutuo',
+      'rata',
+      'rate',
+      'obiettivo',
+      'obiettivi',
+      'target',
+      'saldo',
+      'disponibile',
+      'posso comprare',
+      'posso spendere',
+      'quanto posso',
+      'categoria',
+      'categorie',
+      'fine mese',
+      'margine',
+      'sicurezza',
+      'finanziaria',
+      'finanziario',
+      'conto',
+      'acquisto',
+      'acquisti',
+      'stipendi',
+      'guadagno',
+      'guadagnato',
+    ];
+
+    return _containsAny(text, financialWords);
+  }
+
+  String? _localAnswerForQuestion(String question) {
+    final text = _normalizeQuestion(question);
+
+    if (_isGreetingOrSmallTalk(text)) {
+      return 'Ciao! 😊 Posso aiutarti con domande legate alla tua situazione finanziaria. Per esempio puoi chiedermi:\n\n'
+          '• Posso spendere 100€ questo mese?\n'
+          '• Quanto posso risparmiare?\n'
+          '• Sto spendendo troppo?\n'
+          '• Quali spese dovrei controllare?\n'
+          '• Quanto posso usare al giorno senza rischiare?\n'
+          '• Come posso raggiungere meglio i miei obiettivi?';
+    }
+
+    if (_isClearlyInvalidText(text)) {
+      return 'Non ho capito bene la domanda. Prova a scrivermi qualcosa legato a spese, entrate, budget, risparmio o obiettivi.';
+    }
+
+    if (!_hasFinancialIntent(text)) {
+      return 'Posso aiutarti solo con domande legate alla tua situazione finanziaria: spese, entrate, budget, risparmio, obiettivi e gestione del mese.\n\n'
+          'Prova per esempio a chiedermi: “Posso spendere 50€ oggi?” oppure “Quanto posso risparmiare questo mese?”.';
+    }
+
+    return null;
   }
 
   Future<void> _askQuestion() async {
@@ -105,6 +269,27 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     });
 
     _scrollChatToBottom();
+
+    final localAnswer = _localAnswerForQuestion(question);
+
+    if (localAnswer != null) {
+      await Future.delayed(const Duration(milliseconds: 250));
+
+      if (!mounted) return;
+
+      setState(() {
+        _messages.add(
+          _AIMessage(
+            text: localAnswer,
+            isUser: false,
+          ),
+        );
+        _isAsking = false;
+      });
+
+      _scrollChatToBottom();
+      return;
+    }
 
     try {
       final answer = await _financeService.askAIPlannerLocally(
@@ -225,8 +410,10 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: colors.scaffold,
       body: FutureBuilder<Map<String, dynamic>>(
         future: _plannerFuture,
         builder: (context, snapshot) {
@@ -235,8 +422,10 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
               final isMobile = constraints.maxWidth < 800;
 
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(),
+                return Center(
+                  child: CircularProgressIndicator(
+                    color: colors.primary,
+                  ),
                 );
               }
 
@@ -258,13 +447,9 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
               final spendableBudget = _amountFrom(data['spendable_budget']);
               final dailyAvailable = _amountFrom(data['daily_available']);
               final score = _intFrom(data['financial_health_score']);
-              final mood = (data['financial_mood'] ?? 'Da configurare')
-                  .toString();
-              final topCategoryName =
-                  (data['top_category_name'] ?? '').toString();
-              final topCategoryAmount = _amountFrom(
-                data['top_category_amount'],
-              );
+              final mood = (data['financial_mood'] ?? 'Da configurare').toString();
+              final topCategoryName = (data['top_category_name'] ?? '').toString();
+              final topCategoryAmount = _amountFrom(data['top_category_amount']);
 
               final previousTotalExpenses = _amountFrom(
                 data['previous_total_expenses'],
@@ -284,6 +469,8 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
               final upcomingExpenses = _listOfMaps(data['upcoming_expenses']);
 
               return RefreshIndicator(
+                color: colors.primary,
+                backgroundColor: colors.card,
                 onRefresh: _refreshPlanner,
                 child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(
@@ -359,12 +546,10 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                                 _AIAdviceCard(
                                   suggestions: suggestions,
                                   topCategoryName: topCategoryName,
-                                  topCategoryAmount:
-                                      _currencyFormatter.format(
+                                  topCategoryAmount: _currencyFormatter.format(
                                     topCategoryAmount,
                                   ),
-                                  previousTotalExpenses:
-                                      previousTotalExpenses,
+                                  previousTotalExpenses: previousTotalExpenses,
                                   totalExpenses: totalExpenses,
                                   formatMoney: _currencyFormatter.format,
                                 ),
@@ -494,6 +679,111 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   }
 }
 
+class _AIPlannerColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color headerBackground;
+  final Color headerSoft;
+  final Color headerBorder;
+  final Color headerText;
+  final Color headerMuted;
+  final Color shadow;
+
+  const _AIPlannerColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.headerBackground,
+    required this.headerSoft,
+    required this.headerBorder,
+    required this.headerText,
+    required this.headerMuted,
+    required this.shadow,
+  });
+
+  factory _AIPlannerColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _AIPlannerColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        headerBackground: Color(0xFF020617),
+        headerSoft: Color(0xFF111827),
+        headerBorder: Color(0xFF334155),
+        headerText: Colors.white,
+        headerMuted: Color(0xFFCBD5E1),
+        shadow: Colors.black,
+      );
+    }
+
+    return const _AIPlannerColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF7FAFE),
+      cardSofter: Color(0xFFF3F6FB),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      headerBackground: Color(0xFF172033),
+      headerSoft: Color(0x14FFFFFF),
+      headerBorder: Color(0x1FFFFFFF),
+      headerText: Colors.white,
+      headerMuted: Color(0xFFD7DEE9),
+      shadow: Colors.black,
+    );
+  }
+}
+
+BoxDecoration _cardDecoration(BuildContext context) {
+  final colors = _AIPlannerColors.of(context);
+
+  return BoxDecoration(
+    color: colors.card,
+    borderRadius: BorderRadius.circular(26),
+    border: Border.all(
+      color: colors.border,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
+        blurRadius: colors.isDark ? 22 : 16,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+}
+
 class _AIMessage {
   final String text;
   final bool isUser;
@@ -529,6 +819,7 @@ class _AIPlannerHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 800;
 
@@ -536,11 +827,11 @@ class _AIPlannerHeader extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 22 : 28),
       decoration: BoxDecoration(
-        color: const Color(0xFF172033),
+        color: colors.headerBackground,
         borderRadius: BorderRadius.circular(isMobile ? 26 : 30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.10),
+            color: colors.shadow.withValues(alpha: colors.isDark ? 0.24 : 0.10),
             blurRadius: 24,
             offset: const Offset(0, 14),
           ),
@@ -574,8 +865,12 @@ class _AIPlannerHeader extends StatelessWidget {
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('Aggiorna analisi'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF172033),
+                      backgroundColor: colors.isDark
+                          ? colors.primary
+                          : Colors.white,
+                      foregroundColor: colors.isDark
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFF172033),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
@@ -619,8 +914,12 @@ class _AIPlannerHeader extends StatelessWidget {
                         icon: const Icon(Icons.refresh_rounded),
                         label: const Text('Aggiorna analisi'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF172033),
+                          backgroundColor: colors.isDark
+                              ? colors.primary
+                              : Colors.white,
+                          foregroundColor: colors.isDark
+                              ? const Color(0xFF0F172A)
+                              : const Color(0xFF172033),
                           elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
@@ -656,6 +955,8 @@ class _HeaderText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -667,7 +968,7 @@ class _HeaderText extends StatelessWidget {
             Text(
               'AI Planner',
               style: TextStyle(
-                color: Colors.white,
+                color: colors.headerText,
                 fontSize: isMobile ? 28 : 34,
                 fontWeight: FontWeight.w900,
                 height: 1.1,
@@ -711,7 +1012,7 @@ class _HeaderText extends StatelessWidget {
         Text(
           'Il tuo assistente personale per capire cosa puoi spendere, quanto puoi risparmiare e come arrivare meglio a fine mese.',
           style: TextStyle(
-            color: const Color(0xFFD7DEE9),
+            color: colors.headerMuted,
             fontSize: isMobile ? 15 : 16,
             height: 1.45,
           ),
@@ -721,26 +1022,26 @@ class _HeaderText extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
+            color: colors.headerSoft,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.12),
+              color: colors.headerBorder,
             ),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
+              Icon(
                 Icons.auto_awesome_rounded,
-                color: Color(0xFF93C5FD),
+                color: colors.primary,
                 size: 24,
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   insight,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: colors.headerText,
                     fontWeight: FontWeight.w800,
                     height: 1.4,
                   ),
@@ -832,6 +1133,7 @@ class _HeaderMiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 800;
 
@@ -839,10 +1141,10 @@ class _HeaderMiniStat extends StatelessWidget {
       width: isMobile ? double.infinity : 150,
       padding: EdgeInsets.all(isMobile ? 14 : 16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
+        color: colors.headerSoft,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.12),
+          color: colors.headerBorder,
         ),
       ),
       child: Column(
@@ -852,8 +1154,8 @@ class _HeaderMiniStat extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFFD7DEE9),
+            style: TextStyle(
+              color: colors.headerMuted,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -864,7 +1166,7 @@ class _HeaderMiniStat extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: Colors.white,
+              color: colors.headerText,
               fontSize: isMobile ? 18 : 19,
               fontWeight: FontWeight.w900,
             ),
@@ -940,24 +1242,12 @@ class _SummaryItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final isMobile = MediaQuery.sizeOf(context).width < 800;
 
     return Container(
       padding: EdgeInsets.all(isMobile ? 15 : 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -965,7 +1255,7 @@ class _SummaryItem extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.10),
+              color: color.withValues(alpha: colors.isDark ? 0.18 : 0.10),
               borderRadius: BorderRadius.circular(15),
             ),
             child: Icon(
@@ -979,8 +1269,8 @@ class _SummaryItem extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
               fontWeight: FontWeight.w800,
               fontSize: 12.5,
             ),
@@ -991,7 +1281,7 @@ class _SummaryItem extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: const Color(0xFF172033),
+              color: colors.textPrimary,
               fontWeight: FontWeight.w900,
               fontSize: isMobile ? 18 : 22,
             ),
@@ -1037,6 +1327,7 @@ class _AIAdviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final visibleSuggestions = suggestions.isEmpty
         ? [
             'Aggiungi entrate, spese e obiettivi per ricevere consigli più precisi.',
@@ -1046,7 +1337,7 @@ class _AIAdviceCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1069,27 +1360,27 @@ class _AIAdviceCard extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: const Color(0xFFF7FAFE),
+              color: colors.cardSoft,
               borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: const Color(0xFFE5ECF5),
+                color: colors.border,
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Confronto rapido',
                   style: TextStyle(
-                    color: Color(0xFF172033),
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   _comparisonText(),
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
+                  style: TextStyle(
+                    color: colors.textSecondary,
                     fontWeight: FontWeight.w700,
                     height: 1.35,
                   ),
@@ -1097,7 +1388,8 @@ class _AIAdviceCard extends StatelessWidget {
                 if (topCategoryName.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   _InfoBadge(
-                    text: 'Categoria più alta: $topCategoryName · $topCategoryAmount',
+                    text:
+                        'Categoria più alta: $topCategoryName · $topCategoryAmount',
                     icon: Icons.pie_chart_rounded,
                   ),
                 ],
@@ -1119,6 +1411,8 @@ class _AdviceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1127,21 +1421,21 @@ class _AdviceRow extends StatelessWidget {
           height: 28,
           margin: const EdgeInsets.only(top: 1),
           decoration: BoxDecoration(
-            color: const Color(0xFFE3F2FD),
+            color: colors.primarySoft,
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Icon(
+          child: Icon(
             Icons.auto_awesome_rounded,
             size: 16,
-            color: Color(0xFF1677F2),
+            color: colors.primary,
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
-              color: Color(0xFF334155),
+            style: TextStyle(
+              color: colors.textPrimary,
               fontWeight: FontWeight.w700,
               height: 1.4,
             ),
@@ -1171,12 +1465,13 @@ class _AIChatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final isMobile = MediaQuery.sizeOf(context).width < 800;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1196,11 +1491,13 @@ class _AIChatCard extends StatelessWidget {
               ),
               _QuickQuestionChip(
                 label: 'Quanto posso risparmiare?',
-                onTap: () => onQuickQuestion('Quanto posso risparmiare questo mese?'),
+                onTap: () =>
+                    onQuickQuestion('Quanto posso risparmiare questo mese?'),
               ),
               _QuickQuestionChip(
                 label: 'Sto spendendo troppo?',
-                onTap: () => onQuickQuestion('Sto spendendo troppo questo mese?'),
+                onTap: () =>
+                    onQuickQuestion('Sto spendendo troppo questo mese?'),
               ),
             ],
           ),
@@ -1209,10 +1506,10 @@ class _AIChatCard extends StatelessWidget {
             height: isMobile ? 330 : 390,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF7FAFE),
+              color: colors.cardSoft,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: const Color(0xFFE5ECF5),
+                color: colors.border,
               ),
             ),
             child: ListView.builder(
@@ -1242,30 +1539,38 @@ class _AIChatCard extends StatelessWidget {
                   maxLines: 4,
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => onSend(),
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'Chiedi qualcosa al tuo AI Planner...',
+                    hintStyle: TextStyle(
+                      color: colors.textMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
                     filled: true,
-                    fillColor: const Color(0xFFF7FAFE),
+                    fillColor: colors.cardSoft,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 14,
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFFE5ECF5),
+                      borderSide: BorderSide(
+                        color: colors.border,
                       ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFFE5ECF5),
+                      borderSide: BorderSide(
+                        color: colors.border,
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFF1677F2),
+                      borderSide: BorderSide(
+                        color: colors.primary,
                         width: 1.5,
                       ),
                     ),
@@ -1279,10 +1584,11 @@ class _AIChatCard extends StatelessWidget {
                 child: ElevatedButton(
                   onPressed: isAsking ? null : onSend,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1677F2),
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFFE5ECF5),
-                    disabledForegroundColor: const Color(0xFF94A3B8),
+                    backgroundColor: colors.primary,
+                    foregroundColor:
+                        colors.isDark ? const Color(0xFF0F172A) : Colors.white,
+                    disabledBackgroundColor: colors.border,
+                    disabledForegroundColor: colors.textMuted,
                     elevation: 0,
                     padding: EdgeInsets.zero,
                     shape: RoundedRectangleBorder(
@@ -1290,12 +1596,14 @@ class _AIChatCard extends StatelessWidget {
                     ),
                   ),
                   child: isAsking
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 19,
                           height: 19,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: colors.isDark
+                                ? const Color(0xFF0F172A)
+                                : Colors.white,
                           ),
                         )
                       : const Icon(Icons.send_rounded),
@@ -1320,8 +1628,10 @@ class _QuickQuestionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Material(
-      color: const Color(0xFFE3F2FD),
+      color: colors.primarySoft,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onTap,
@@ -1333,8 +1643,8 @@ class _QuickQuestionChip extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF1565C0),
+            style: TextStyle(
+              color: colors.primary,
               fontWeight: FontWeight.w900,
               fontSize: 12,
             ),
@@ -1354,6 +1664,7 @@ class _ChatBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final isUser = message.isUser;
 
     return Align(
@@ -1366,7 +1677,7 @@ class _ChatBubble extends StatelessWidget {
           vertical: 12,
         ),
         decoration: BoxDecoration(
-          color: isUser ? const Color(0xFF1677F2) : Colors.white,
+          color: isUser ? colors.primary : colors.card,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -1376,13 +1687,17 @@ class _ChatBubble extends StatelessWidget {
           border: isUser
               ? null
               : Border.all(
-                  color: const Color(0xFFE5ECF5),
+                  color: colors.border,
                 ),
         ),
         child: Text(
           message.text,
           style: TextStyle(
-            color: isUser ? Colors.white : const Color(0xFF334155),
+            color: isUser
+                ? colors.isDark
+                    ? const Color(0xFF0F172A)
+                    : Colors.white
+                : colors.textPrimary,
             fontWeight: FontWeight.w700,
             height: 1.35,
           ),
@@ -1397,6 +1712,8 @@ class _TypingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -1406,7 +1723,7 @@ class _TypingBubble extends StatelessWidget {
           vertical: 12,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.card,
           borderRadius: const BorderRadius.only(
             topLeft: Radius.circular(18),
             topRight: Radius.circular(18),
@@ -1414,13 +1731,13 @@ class _TypingBubble extends StatelessWidget {
             bottomRight: Radius.circular(18),
           ),
           border: Border.all(
-            color: const Color(0xFFE5ECF5),
+            color: colors.border,
           ),
         ),
-        child: const Text(
+        child: Text(
           'Sto analizzando i tuoi dati...',
           style: TextStyle(
-            color: Color(0xFF64748B),
+            color: colors.textSecondary,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -1457,7 +1774,7 @@ class _BudgetBreakdownCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1498,7 +1815,9 @@ class _BudgetBreakdownCard extends StatelessWidget {
               _BreakdownTile(
                 label: 'Disponibile',
                 value: availableBudget,
-                color: isPositive ? const Color(0xFF1677F2) : const Color(0xFFDC2626),
+                color: isPositive
+                    ? const Color(0xFF1677F2)
+                    : const Color(0xFFDC2626),
                 icon: Icons.account_balance_wallet_rounded,
               ),
               _BreakdownTile(
@@ -1536,6 +1855,7 @@ class _BreakdownTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 800;
 
@@ -1543,10 +1863,10 @@ class _BreakdownTile extends StatelessWidget {
       width: isMobile ? double.infinity : 250,
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: colors.isDark ? 0.15 : 0.08),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: color.withValues(alpha: 0.12),
+          color: color.withValues(alpha: colors.isDark ? 0.22 : 0.12),
         ),
       ),
       child: Row(
@@ -1555,7 +1875,7 @@ class _BreakdownTile extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
+              color: color.withValues(alpha: colors.isDark ? 0.20 : 0.12),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
@@ -1572,8 +1892,8 @@ class _BreakdownTile extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
+                  style: TextStyle(
+                    color: colors.textSecondary,
                     fontWeight: FontWeight.w800,
                     fontSize: 12,
                   ),
@@ -1583,8 +1903,8 @@ class _BreakdownTile extends StatelessWidget {
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF172033),
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                     fontSize: 17,
                   ),
@@ -1622,7 +1942,7 @@ class _CategoriesCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1636,7 +1956,8 @@ class _CategoriesCard extends StatelessWidget {
             const _EmptyMiniState(
               icon: Icons.pie_chart_outline_rounded,
               title: 'Nessuna categoria',
-              text: 'Quando aggiungi spese, qui vedrai le categorie principali.',
+              text:
+                  'Quando aggiungi spese, qui vedrai le categorie principali.',
             )
           else
             Column(
@@ -1671,16 +1992,17 @@ class _CategoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final progress = (percentage / 100).clamp(0.0, 1.0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1692,16 +2014,16 @@ class _CategoryRow extends StatelessWidget {
                   name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF172033),
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
               Text(
                 amount,
-                style: const TextStyle(
-                  color: Color(0xFF172033),
+                style: TextStyle(
+                  color: colors.textPrimary,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1713,8 +2035,8 @@ class _CategoryRow extends StatelessWidget {
             child: LinearProgressIndicator(
               minHeight: 9,
               value: progress,
-              backgroundColor: const Color(0xFFE5ECF5),
-              color: const Color(0xFF1677F2),
+              backgroundColor: colors.border,
+              color: colors.primary,
             ),
           ),
           const SizedBox(height: 7),
@@ -1722,8 +2044,8 @@ class _CategoryRow extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: Text(
               '${percentage.toStringAsFixed(0)}% delle uscite',
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: colors.textSecondary,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
@@ -1761,7 +2083,7 @@ class _GoalsPlannerCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1775,7 +2097,8 @@ class _GoalsPlannerCard extends StatelessWidget {
             const _EmptyMiniState(
               icon: Icons.flag_outlined,
               title: 'Nessun obiettivo attivo',
-              text: 'Crea un obiettivo per ricevere consigli di risparmio più precisi.',
+              text:
+                  'Crea un obiettivo per ricevere consigli di risparmio più precisi.',
             )
           else
             Column(
@@ -1831,16 +2154,17 @@ class _GoalPlannerRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final value = (progress / 100).clamp(0.0, 1.0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1848,9 +2172,9 @@ class _GoalPlannerRow extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.flag_rounded,
-                color: Color(0xFF1677F2),
+                color: colors.primary,
                 size: 20,
               ),
               const SizedBox(width: 8),
@@ -1859,15 +2183,15 @@ class _GoalPlannerRow extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF172033),
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
               _ColoredBadge(
                 text: _daysLabel(),
-                color: const Color(0xFF1677F2),
+                color: colors.primary,
               ),
             ],
           ),
@@ -1877,7 +2201,7 @@ class _GoalPlannerRow extends StatelessWidget {
             child: LinearProgressIndicator(
               minHeight: 9,
               value: value,
-              backgroundColor: const Color(0xFFE5ECF5),
+              backgroundColor: colors.border,
               color: const Color(0xFF16A34A),
             ),
           ),
@@ -1922,9 +2246,8 @@ class _UpcomingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = unpaidExpenses.isNotEmpty ? unpaidExpenses : upcomingExpenses;
-    final title = unpaidExpenses.isNotEmpty
-        ? 'Spese ancora da pagare'
-        : 'Prossime spese';
+    final title =
+        unpaidExpenses.isNotEmpty ? 'Spese ancora da pagare' : 'Prossime spese';
     final subtitle = unpaidExpenses.isNotEmpty
         ? 'Controlla queste voci prima di fare nuove spese.'
         : 'Le prossime uscite previste dal tuo piano.';
@@ -1932,7 +2255,7 @@ class _UpcomingCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1946,7 +2269,8 @@ class _UpcomingCard extends StatelessWidget {
             const _EmptyMiniState(
               icon: Icons.check_circle_outline_rounded,
               title: 'Nessuna scadenza critica',
-              text: 'Non risultano spese imminenti o non pagate per questo mese.',
+              text:
+                  'Non risultano spese imminenti o non pagate per questo mese.',
             )
           else
             Column(
@@ -1985,6 +2309,7 @@ class _UpcomingExpenseRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
     final formattedDate = date == null
         ? 'Data non indicata'
         : DateFormat('dd/MM/yyyy', 'it_IT').format(date!);
@@ -1993,10 +2318,10 @@ class _UpcomingExpenseRow extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Row(
@@ -2005,7 +2330,9 @@ class _UpcomingExpenseRow extends StatelessWidget {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: const Color(0xFFFFF7ED),
+              color: colors.isDark
+                  ? const Color(0xFF451A03)
+                  : const Color(0xFFFFF7ED),
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
@@ -2022,8 +2349,8 @@ class _UpcomingExpenseRow extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF172033),
+                  style: TextStyle(
+                    color: colors.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -2032,8 +2359,8 @@ class _UpcomingExpenseRow extends StatelessWidget {
                   '$category · $formattedDate',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
+                  style: TextStyle(
+                    color: colors.textSecondary,
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
                   ),
@@ -2044,8 +2371,8 @@ class _UpcomingExpenseRow extends StatelessWidget {
           const SizedBox(width: 12),
           Text(
             amount,
-            style: const TextStyle(
-              color: Color(0xFF172033),
+            style: TextStyle(
+              color: colors.textPrimary,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -2068,6 +2395,8 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2075,12 +2404,12 @@ class _SectionTitle extends StatelessWidget {
           width: 46,
           height: 46,
           decoration: BoxDecoration(
-            color: const Color(0xFFE3F2FD),
+            color: colors.primarySoft,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Icon(
             icon,
-            color: const Color(0xFF1677F2),
+            color: colors.primary,
           ),
         ),
         const SizedBox(width: 12),
@@ -2090,8 +2419,8 @@ class _SectionTitle extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  color: Color(0xFF172033),
+                style: TextStyle(
+                  color: colors.textPrimary,
                   fontSize: 19,
                   fontWeight: FontWeight.w900,
                 ),
@@ -2099,8 +2428,8 @@ class _SectionTitle extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  color: Color(0xFF64748B),
+                style: TextStyle(
+                  color: colors.textSecondary,
                   fontWeight: FontWeight.w700,
                   height: 1.35,
                 ),
@@ -2124,14 +2453,19 @@ class _InfoBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F6FB),
+        color: colors.cardSofter,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.isDark ? colors.border : Colors.transparent,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2139,14 +2473,14 @@ class _InfoBadge extends StatelessWidget {
           Icon(
             icon,
             size: 15,
-            color: const Color(0xFF64748B),
+            color: colors.textSecondary,
           ),
           const SizedBox(width: 5),
           Flexible(
             child: Text(
               text,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: colors.textSecondary,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
@@ -2169,13 +2503,15 @@ class _ColoredBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withValues(alpha: colors.isDark ? 0.18 : 0.1),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -2203,29 +2539,31 @@ class _EmptyMiniState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
         children: [
           Icon(
             icon,
-            color: const Color(0xFF94A3B8),
+            color: colors.textMuted,
             size: 38,
           ),
           const SizedBox(height: 12),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF172033),
+            style: TextStyle(
+              color: colors.textPrimary,
               fontWeight: FontWeight.w900,
               fontSize: 17,
             ),
@@ -2234,8 +2572,8 @@ class _EmptyMiniState extends StatelessWidget {
           Text(
             text,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
               fontWeight: FontWeight.w700,
               height: 1.35,
             ),
@@ -2255,13 +2593,15 @@ class _AIPlannerError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Container(
           constraints: const BoxConstraints(maxWidth: 520),
           padding: const EdgeInsets.all(28),
-          decoration: _cardDecoration(),
+          decoration: _cardDecoration(context),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2271,21 +2611,21 @@ class _AIPlannerError extends StatelessWidget {
                 size: 48,
               ),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 'Analisi non disponibile',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                   fontWeight: FontWeight.w900,
                   fontSize: 22,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Non sono riuscito a leggere i dati finanziari. Riprova tra poco oppure controlla entrate, spese e obiettivi.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Color(0xFF64748B),
+                  color: colors.textSecondary,
                   fontWeight: FontWeight.w700,
                   height: 1.4,
                 ),
@@ -2298,8 +2638,9 @@ class _AIPlannerError extends StatelessWidget {
                   icon: const Icon(Icons.refresh_rounded),
                   label: const Text('Riprova'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1677F2),
-                    foregroundColor: Colors.white,
+                    backgroundColor: colors.primary,
+                    foregroundColor:
+                        colors.isDark ? const Color(0xFF0F172A) : Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
@@ -2316,21 +2657,4 @@ class _AIPlannerError extends StatelessWidget {
       ),
     );
   }
-}
-
-BoxDecoration _cardDecoration() {
-  return BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(26),
-    border: Border.all(
-      color: const Color(0xFFE5ECF5),
-    ),
-    boxShadow: [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.035),
-        blurRadius: 16,
-        offset: const Offset(0, 8),
-      ),
-    ],
-  );
 }

@@ -18,6 +18,10 @@ class FinanceService {
     return user.uid;
   }
 
+  DocumentReference<Map<String, dynamic>> get userProfileRef {
+    return _db.collection('users').doc(_uid);
+  }
+
   CollectionReference<Map<String, dynamic>> get incomesRef {
     return _db.collection('users').doc(_uid).collection('incomes');
   }
@@ -34,6 +38,14 @@ class FinanceService {
     return _db.collection('users').doc(_uid).collection('watch_summary');
   }
 
+  CollectionReference<Map<String, dynamic>> get bankAccountsRef {
+    return _db.collection('users').doc(_uid).collection('bank_accounts');
+  }
+
+  CollectionReference<Map<String, dynamic>> get bankTransfersRef {
+    return _db.collection('users').doc(_uid).collection('bank_transfers');
+  }
+
   Stream<QuerySnapshot<Map<String, dynamic>>> incomesStream() {
     return incomesRef.orderBy('date', descending: true).snapshots();
   }
@@ -46,17 +58,264 @@ class FinanceService {
     return goalsRef.orderBy('deadline', descending: false).snapshots();
   }
 
+  Stream<QuerySnapshot<Map<String, dynamic>>> bankAccountsStream() {
+    return bankAccountsRef.orderBy('created_at', descending: false).snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> bankTransfersStream() {
+    return bankTransfersRef.orderBy('date', descending: true).snapshots();
+  }
+
+  Future<Map<String, dynamic>> getUserProfile() async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Utente non autenticato');
+    }
+
+    final snapshot = await userProfileRef.get();
+    final data = snapshot.data() ?? {};
+
+    final displayName = user.displayName?.trim() ?? '';
+    final displayNameParts = displayName
+        .split(' ')
+        .where((part) => part.trim().isNotEmpty)
+        .toList();
+
+    String name = (data['name'] ?? '').toString().trim();
+    String surname = (data['surname'] ?? '').toString().trim();
+
+    if (name.isEmpty && displayNameParts.isNotEmpty) {
+      name = displayNameParts.first;
+    }
+
+    if (surname.isEmpty && displayNameParts.length >= 2) {
+      surname = displayNameParts.sublist(1).join(' ');
+    }
+
+    DateTime? birthDate;
+
+    final rawBirthDate = data['birth_date'];
+
+    if (rawBirthDate is Timestamp) {
+      birthDate = rawBirthDate.toDate();
+    } else if (rawBirthDate is DateTime) {
+      birthDate = rawBirthDate;
+    } else if (rawBirthDate is String && rawBirthDate.trim().isNotEmpty) {
+      birthDate = DateTime.tryParse(rawBirthDate);
+    }
+
+    final fullName = '$name $surname'.trim();
+
+    return {
+      'uid': user.uid,
+      'name': name,
+      'surname': surname,
+      'display_name': fullName.isNotEmpty ? fullName : displayName,
+      'email': user.email ?? '',
+      'country': (data['country'] ?? '').toString().trim(),
+      'phone': (data['phone'] ?? '').toString().trim(),
+      'birth_date': birthDate,
+    };
+  }
+
+  Future<void> updateUserProfile({
+    required String name,
+    required String surname,
+    DateTime? birthDate,
+    String? country,
+    String? phone,
+  }) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('Utente non autenticato');
+    }
+
+    final cleanedName = name.trim();
+    final cleanedSurname = surname.trim();
+    final cleanedCountry = country?.trim() ?? '';
+    final cleanedPhone = phone?.trim() ?? '';
+
+    if (cleanedName.isEmpty) {
+      throw Exception('Il nome è obbligatorio');
+    }
+
+    final displayName = '$cleanedName $cleanedSurname'.trim();
+
+    await user.updateDisplayName(displayName);
+    await user.reload();
+
+    await userProfileRef.set(
+      {
+        'name': cleanedName,
+        'surname': cleanedSurname,
+        'display_name': displayName,
+        'email': user.email,
+        'country': cleanedCountry,
+        'phone': cleanedPhone,
+        'birth_date': birthDate == null ? null : Timestamp.fromDate(birthDate),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<void> addBankAccount({
+    required String name,
+    required double balance,
+  }) async {
+    await bankAccountsRef.add({
+      'name': name.trim(),
+      'balance': balance,
+      'created_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+
+    await _refreshWatchSummarySafely();
+  }
+
+  Future<void> updateBankAccount({
+    required String bankAccountId,
+    required String name,
+    required double balance,
+  }) async {
+    await bankAccountsRef.doc(bankAccountId).update({
+      'name': name.trim(),
+      'balance': balance,
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+
+    await _refreshWatchSummarySafely();
+  }
+
+  Future<void> deleteBankAccount({
+    required String bankAccountId,
+  }) async {
+    await bankAccountsRef.doc(bankAccountId).delete();
+
+    await _refreshWatchSummarySafely();
+  }
+
+  Future<void> transferMoneyBetweenBankAccounts({
+    required String fromBankAccountId,
+    required String toBankAccountId,
+    required double amount,
+    required DateTime date,
+    String? note,
+  }) async {
+    if (fromBankAccountId.trim().isEmpty) {
+      throw Exception('Seleziona il conto di partenza');
+    }
+
+    if (toBankAccountId.trim().isEmpty) {
+      throw Exception('Seleziona il conto di destinazione');
+    }
+
+    if (fromBankAccountId == toBankAccountId) {
+      throw Exception(
+        'Il conto di partenza e quello di destinazione devono essere diversi',
+      );
+    }
+
+    if (amount <= 0) {
+      throw Exception('L’importo deve essere maggiore di zero');
+    }
+
+    final fromRef = bankAccountsRef.doc(fromBankAccountId);
+    final toRef = bankAccountsRef.doc(toBankAccountId);
+    final transferRef = bankTransfersRef.doc();
+
+    await _db.runTransaction((transaction) async {
+      final fromSnapshot = await transaction.get(fromRef);
+      final toSnapshot = await transaction.get(toRef);
+
+      if (!fromSnapshot.exists) {
+        throw Exception('Conto di partenza non trovato');
+      }
+
+      if (!toSnapshot.exists) {
+        throw Exception('Conto di destinazione non trovato');
+      }
+
+      final fromData = fromSnapshot.data() ?? {};
+      final toData = toSnapshot.data() ?? {};
+
+      final fromBalance = _toDouble(fromData['balance']);
+      final toBalance = _toDouble(toData['balance']);
+
+      if (amount > fromBalance) {
+        throw Exception('Saldo insufficiente sul conto di partenza');
+      }
+
+      final fromName = (fromData['name'] ?? 'Conto partenza').toString();
+      final toName = (toData['name'] ?? 'Conto destinazione').toString();
+
+      transaction.update(fromRef, {
+        'balance': fromBalance - amount,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(toRef, {
+        'balance': toBalance + amount,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(transferRef, {
+        'fromBankAccountId': fromBankAccountId,
+        'fromBankAccountName': fromName,
+        'toBankAccountId': toBankAccountId,
+        'toBankAccountName': toName,
+        'amount': amount,
+        'date': Timestamp.fromDate(date),
+        'note': note == null || note.trim().isEmpty ? null : note.trim(),
+        'created_at': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+    });
+
+    await _refreshWatchSummarySafely();
+  }
+
   Future<void> addIncome({
     required String title,
     required double amount,
     required DateTime date,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
-    await incomesRef.add({
-      'title': title.trim(),
-      'amount': amount,
-      'date': Timestamp.fromDate(date),
-      'created_at': FieldValue.serverTimestamp(),
-      'updated_at': FieldValue.serverTimestamp(),
+    await _db.runTransaction((transaction) async {
+      final incomeRef = incomesRef.doc();
+
+      DocumentReference<Map<String, dynamic>>? accountRef;
+      DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
+
+      if (bankAccountId != null && bankAccountId.trim().isNotEmpty) {
+        accountRef = bankAccountsRef.doc(bankAccountId);
+        accountSnapshot = await transaction.get(accountRef);
+      }
+
+      transaction.set(incomeRef, {
+        'title': title.trim(),
+        'amount': amount,
+        'date': Timestamp.fromDate(date),
+        'bankAccountId': bankAccountId,
+        'bankAccountName': bankAccountName,
+        'created_at': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      if (accountRef != null &&
+          accountSnapshot != null &&
+          accountSnapshot.exists) {
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance + amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -67,12 +326,85 @@ class FinanceService {
     required String title,
     required double amount,
     required DateTime date,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
-    await incomesRef.doc(incomeId).update({
-      'title': title.trim(),
-      'amount': amount,
-      'date': Timestamp.fromDate(date),
-      'updated_at': FieldValue.serverTimestamp(),
+    await _db.runTransaction((transaction) async {
+      final incomeRef = incomesRef.doc(incomeId);
+      final incomeSnapshot = await transaction.get(incomeRef);
+
+      if (!incomeSnapshot.exists) {
+        throw Exception('Entrata non trovata');
+      }
+
+      final oldData = incomeSnapshot.data() ?? {};
+      final oldAmount = _toDouble(oldData['amount']);
+      final oldBankAccountId = oldData['bankAccountId']?.toString();
+
+      DocumentReference<Map<String, dynamic>>? oldAccountRef;
+      DocumentSnapshot<Map<String, dynamic>>? oldAccountSnapshot;
+
+      DocumentReference<Map<String, dynamic>>? newAccountRef;
+      DocumentSnapshot<Map<String, dynamic>>? newAccountSnapshot;
+
+      if (oldBankAccountId != null && oldBankAccountId.trim().isNotEmpty) {
+        oldAccountRef = bankAccountsRef.doc(oldBankAccountId);
+        oldAccountSnapshot = await transaction.get(oldAccountRef);
+      }
+
+      if (bankAccountId != null && bankAccountId.trim().isNotEmpty) {
+        newAccountRef = bankAccountsRef.doc(bankAccountId);
+        newAccountSnapshot = await transaction.get(newAccountRef);
+      }
+
+      transaction.update(incomeRef, {
+        'title': title.trim(),
+        'amount': amount,
+        'date': Timestamp.fromDate(date),
+        'bankAccountId': bankAccountId,
+        'bankAccountName': bankAccountName,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      if (oldAccountRef != null &&
+          oldAccountSnapshot != null &&
+          oldAccountSnapshot.exists &&
+          oldBankAccountId == bankAccountId) {
+        final oldAccountData = oldAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(oldAccountData['balance']);
+        final difference = amount - oldAmount;
+
+        transaction.update(oldAccountRef, {
+          'balance': currentBalance + difference,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        return;
+      }
+
+      if (oldAccountRef != null &&
+          oldAccountSnapshot != null &&
+          oldAccountSnapshot.exists) {
+        final oldAccountData = oldAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(oldAccountData['balance']);
+
+        transaction.update(oldAccountRef, {
+          'balance': currentBalance - oldAmount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (newAccountRef != null &&
+          newAccountSnapshot != null &&
+          newAccountSnapshot.exists) {
+        final newAccountData = newAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(newAccountData['balance']);
+
+        transaction.update(newAccountRef, {
+          'balance': currentBalance + amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -81,7 +413,40 @@ class FinanceService {
   Future<void> deleteIncome({
     required String incomeId,
   }) async {
-    await incomesRef.doc(incomeId).delete();
+    await _db.runTransaction((transaction) async {
+      final incomeRef = incomesRef.doc(incomeId);
+      final incomeSnapshot = await transaction.get(incomeRef);
+
+      if (!incomeSnapshot.exists) {
+        throw Exception('Entrata non trovata');
+      }
+
+      final data = incomeSnapshot.data() ?? {};
+      final amount = _toDouble(data['amount']);
+      final bankAccountId = data['bankAccountId']?.toString();
+
+      DocumentReference<Map<String, dynamic>>? accountRef;
+      DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
+
+      if (bankAccountId != null && bankAccountId.trim().isNotEmpty) {
+        accountRef = bankAccountsRef.doc(bankAccountId);
+        accountSnapshot = await transaction.get(accountRef);
+      }
+
+      transaction.delete(incomeRef);
+
+      if (accountRef != null &&
+          accountSnapshot != null &&
+          accountSnapshot.exists) {
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance - amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
+    });
 
     await _refreshWatchSummarySafely();
   }
@@ -100,32 +465,64 @@ class FinanceService {
     String? repeatGroupId,
     int? repeatIndex,
     int? repeatTotal,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
     final isPlanned = type == 'planned';
 
-    await expensesRef.add({
-      'title': title.trim(),
-      'amount': amount,
-      'category': category.trim(),
-      'type': isPlanned ? 'planned' : 'standard',
-      'due_date': isPlanned || dueDate == null
-          ? null
-          : Timestamp.fromDate(dueDate),
-      'month': isPlanned && month != null
-          ? Timestamp.fromDate(DateTime(month.year, month.month))
-          : null,
-      'is_paid': isPlanned ? false : isPaid,
-      'reminder_enabled': isPlanned ? false : reminderEnabled,
-      'split_items': <Map<String, dynamic>>[],
-      'repeat_monthly': isPlanned ? false : repeatMonthly,
-      'repeat_until_date': !isPlanned && repeatUntilDate != null
-          ? Timestamp.fromDate(repeatUntilDate)
-          : null,
-      'repeat_group_id': !isPlanned ? repeatGroupId : null,
-      'repeat_index': !isPlanned ? repeatIndex : null,
-      'repeat_total': !isPlanned ? repeatTotal : null,
-      'created_at': FieldValue.serverTimestamp(),
-      'updated_at': FieldValue.serverTimestamp(),
+    final shouldMoveMoney = !isPlanned &&
+        isPaid &&
+        bankAccountId != null &&
+        bankAccountId.trim().isNotEmpty;
+
+    await _db.runTransaction((transaction) async {
+      DocumentReference<Map<String, dynamic>>? accountRef;
+      DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
+
+      if (shouldMoveMoney) {
+        accountRef = bankAccountsRef.doc(bankAccountId);
+        accountSnapshot = await transaction.get(accountRef);
+      }
+
+      final expenseRef = expensesRef.doc();
+
+      transaction.set(expenseRef, {
+        'title': title.trim(),
+        'amount': amount,
+        'category': category.trim(),
+        'type': isPlanned ? 'planned' : 'standard',
+        'due_date':
+            isPlanned || dueDate == null ? null : Timestamp.fromDate(dueDate),
+        'month': isPlanned && month != null
+            ? Timestamp.fromDate(DateTime(month.year, month.month))
+            : null,
+        'is_paid': isPlanned ? false : isPaid,
+        'reminder_enabled': isPlanned ? false : reminderEnabled,
+        'split_items': <Map<String, dynamic>>[],
+        'repeat_monthly': isPlanned ? false : repeatMonthly,
+        'repeat_until_date': !isPlanned && repeatUntilDate != null
+            ? Timestamp.fromDate(repeatUntilDate)
+            : null,
+        'repeat_group_id': !isPlanned ? repeatGroupId : null,
+        'repeat_index': !isPlanned ? repeatIndex : null,
+        'repeat_total': !isPlanned ? repeatTotal : null,
+        'bankAccountId': shouldMoveMoney ? bankAccountId : null,
+        'bankAccountName': shouldMoveMoney ? bankAccountName : null,
+        'created_at': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      if (accountRef != null &&
+          accountSnapshot != null &&
+          accountSnapshot.exists) {
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance - amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -176,6 +573,8 @@ class FinanceService {
         'repeat_group_id': repeatGroupId,
         'repeat_index': i + 1,
         'repeat_total': dueDates.length,
+        'bankAccountId': null,
+        'bankAccountName': null,
         'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       });
@@ -201,30 +600,117 @@ class FinanceService {
     String? repeatGroupId,
     int? repeatIndex,
     int? repeatTotal,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
-    final isPlanned = type == 'planned';
+    await _db.runTransaction((transaction) async {
+      final expenseRef = expensesRef.doc(expenseId);
+      final expenseSnapshot = await transaction.get(expenseRef);
 
-    await expensesRef.doc(expenseId).update({
-      'title': title.trim(),
-      'amount': amount,
-      'category': category.trim(),
-      'type': isPlanned ? 'planned' : 'standard',
-      'due_date': isPlanned || dueDate == null
-          ? null
-          : Timestamp.fromDate(dueDate),
-      'month': isPlanned && month != null
-          ? Timestamp.fromDate(DateTime(month.year, month.month))
-          : null,
-      'is_paid': isPlanned ? false : isPaid,
-      'reminder_enabled': isPlanned ? false : reminderEnabled,
-      'repeat_monthly': isPlanned ? false : repeatMonthly,
-      'repeat_until_date': !isPlanned && repeatUntilDate != null
-          ? Timestamp.fromDate(repeatUntilDate)
-          : null,
-      'repeat_group_id': !isPlanned ? repeatGroupId : null,
-      'repeat_index': !isPlanned ? repeatIndex : null,
-      'repeat_total': !isPlanned ? repeatTotal : null,
-      'updated_at': FieldValue.serverTimestamp(),
+      if (!expenseSnapshot.exists) {
+        throw Exception('Spesa non trovata');
+      }
+
+      final oldData = expenseSnapshot.data() ?? {};
+      final oldType = (oldData['type'] ?? 'standard').toString();
+      final oldIsPlanned = oldType == 'planned';
+      final oldIsPaid = oldData['is_paid'] == true;
+      final oldAmount = _toDouble(oldData['amount']);
+      final oldBankAccountId = oldData['bankAccountId']?.toString();
+
+      final isPlanned = type == 'planned';
+
+      final oldMovedMoney = !oldIsPlanned &&
+          oldIsPaid &&
+          oldBankAccountId != null &&
+          oldBankAccountId.trim().isNotEmpty;
+
+      final newMovedMoney = !isPlanned &&
+          isPaid &&
+          bankAccountId != null &&
+          bankAccountId.trim().isNotEmpty;
+
+      DocumentReference<Map<String, dynamic>>? oldAccountRef;
+      DocumentSnapshot<Map<String, dynamic>>? oldAccountSnapshot;
+
+      DocumentReference<Map<String, dynamic>>? newAccountRef;
+      DocumentSnapshot<Map<String, dynamic>>? newAccountSnapshot;
+
+      if (oldMovedMoney) {
+        oldAccountRef = bankAccountsRef.doc(oldBankAccountId);
+        oldAccountSnapshot = await transaction.get(oldAccountRef);
+      }
+
+      if (newMovedMoney) {
+        newAccountRef = bankAccountsRef.doc(bankAccountId);
+        newAccountSnapshot = await transaction.get(newAccountRef);
+      }
+
+      transaction.update(expenseRef, {
+        'title': title.trim(),
+        'amount': amount,
+        'category': category.trim(),
+        'type': isPlanned ? 'planned' : 'standard',
+        'due_date':
+            isPlanned || dueDate == null ? null : Timestamp.fromDate(dueDate),
+        'month': isPlanned && month != null
+            ? Timestamp.fromDate(DateTime(month.year, month.month))
+            : null,
+        'is_paid': isPlanned ? false : isPaid,
+        'reminder_enabled': isPlanned ? false : reminderEnabled,
+        'repeat_monthly': isPlanned ? false : repeatMonthly,
+        'repeat_until_date': !isPlanned && repeatUntilDate != null
+            ? Timestamp.fromDate(repeatUntilDate)
+            : null,
+        'repeat_group_id': !isPlanned ? repeatGroupId : null,
+        'repeat_index': !isPlanned ? repeatIndex : null,
+        'repeat_total': !isPlanned ? repeatTotal : null,
+        'bankAccountId': newMovedMoney ? bankAccountId : null,
+        'bankAccountName': newMovedMoney ? bankAccountName : null,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      if (oldMovedMoney &&
+          newMovedMoney &&
+          oldBankAccountId == bankAccountId &&
+          oldAccountRef != null &&
+          oldAccountSnapshot != null &&
+          oldAccountSnapshot.exists) {
+        final accountData = oldAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+        final difference = oldAmount - amount;
+
+        transaction.update(oldAccountRef, {
+          'balance': currentBalance + difference,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        return;
+      }
+
+      if (oldAccountRef != null &&
+          oldAccountSnapshot != null &&
+          oldAccountSnapshot.exists) {
+        final accountData = oldAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(oldAccountRef, {
+          'balance': currentBalance + oldAmount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (newAccountRef != null &&
+          newAccountSnapshot != null &&
+          newAccountSnapshot.exists) {
+        final accountData = newAccountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(newAccountRef, {
+          'balance': currentBalance - amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -233,10 +719,84 @@ class FinanceService {
   Future<void> updateExpensePaid({
     required String expenseId,
     required bool isPaid,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
-    await expensesRef.doc(expenseId).update({
-      'is_paid': isPaid,
-      'updated_at': FieldValue.serverTimestamp(),
+    await _db.runTransaction((transaction) async {
+      final expenseRef = expensesRef.doc(expenseId);
+      final expenseSnapshot = await transaction.get(expenseRef);
+
+      if (!expenseSnapshot.exists) {
+        throw Exception('Spesa non trovata');
+      }
+
+      final data = expenseSnapshot.data() ?? {};
+      final type = (data['type'] ?? 'standard').toString();
+
+      if (type == 'planned') return;
+
+      final oldIsPaid = data['is_paid'] == true;
+      final amount = _toDouble(data['amount']);
+      final oldBankAccountId = data['bankAccountId']?.toString();
+
+      if (oldIsPaid == isPaid) return;
+
+      DocumentReference<Map<String, dynamic>>? accountRef;
+      DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
+
+      if (isPaid) {
+        if (bankAccountId != null && bankAccountId.trim().isNotEmpty) {
+          accountRef = bankAccountsRef.doc(bankAccountId);
+          accountSnapshot = await transaction.get(accountRef);
+        }
+
+        transaction.update(expenseRef, {
+          'is_paid': true,
+          'bankAccountId': bankAccountId,
+          'bankAccountName': bankAccountName,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        if (accountRef != null &&
+            accountSnapshot != null &&
+            accountSnapshot.exists) {
+          final accountData = accountSnapshot.data() ?? {};
+          final currentBalance = _toDouble(accountData['balance']);
+
+          transaction.update(accountRef, {
+            'balance': currentBalance - amount,
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+        }
+
+        return;
+      }
+
+      if (!isPaid) {
+        if (oldBankAccountId != null && oldBankAccountId.trim().isNotEmpty) {
+          accountRef = bankAccountsRef.doc(oldBankAccountId);
+          accountSnapshot = await transaction.get(accountRef);
+        }
+
+        transaction.update(expenseRef, {
+          'is_paid': false,
+          'bankAccountId': null,
+          'bankAccountName': null,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        if (accountRef != null &&
+            accountSnapshot != null &&
+            accountSnapshot.exists) {
+          final accountData = accountSnapshot.data() ?? {};
+          final currentBalance = _toDouble(accountData['balance']);
+
+          transaction.update(accountRef, {
+            'balance': currentBalance + amount,
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+        }
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -247,6 +807,8 @@ class FinanceService {
     required String title,
     required double amount,
     required DateTime paidAt,
+    String? bankAccountId,
+    String? bankAccountName,
   }) async {
     final docRef = expensesRef.doc(expenseId);
 
@@ -255,6 +817,14 @@ class FinanceService {
 
       if (!snapshot.exists) {
         throw Exception('Spesa non trovata');
+      }
+
+      DocumentReference<Map<String, dynamic>>? accountRef;
+      DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
+
+      if (bankAccountId != null && bankAccountId.trim().isNotEmpty) {
+        accountRef = bankAccountsRef.doc(bankAccountId);
+        accountSnapshot = await transaction.get(accountRef);
       }
 
       final data = snapshot.data() ?? {};
@@ -271,6 +841,8 @@ class FinanceService {
         'title': title.trim(),
         'amount': amount,
         'paid_at': Timestamp.fromDate(paidAt),
+        'bankAccountId': bankAccountId,
+        'bankAccountName': bankAccountName,
         'created_at': Timestamp.now(),
       });
 
@@ -278,6 +850,18 @@ class FinanceService {
         'split_items': currentItems,
         'updated_at': FieldValue.serverTimestamp(),
       });
+
+      if (accountRef != null &&
+          accountSnapshot != null &&
+          accountSnapshot.exists) {
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance - amount,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -287,29 +871,106 @@ class FinanceService {
     required String expenseId,
     required List<Map<String, dynamic>> splitItems,
   }) async {
-    final cleanedItems = splitItems.map((item) {
-      final rawPaidAt = item['paid_at'];
-      final rawCreatedAt = item['created_at'];
+    final docRef = expensesRef.doc(expenseId);
 
-      return {
-        'title': (item['title'] ?? '').toString().trim(),
-        'amount': _toDouble(item['amount']),
-        'paid_at': rawPaidAt is Timestamp
-            ? rawPaidAt
-            : rawPaidAt is DateTime
-                ? Timestamp.fromDate(rawPaidAt)
-                : Timestamp.now(),
-        'created_at': rawCreatedAt is Timestamp
-            ? rawCreatedAt
-            : rawCreatedAt is DateTime
-                ? Timestamp.fromDate(rawCreatedAt)
-                : Timestamp.now(),
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+
+      if (!snapshot.exists) {
+        throw Exception('Spesa non trovata');
+      }
+
+      final data = snapshot.data() ?? {};
+      final oldRawItems = data['split_items'];
+
+      final oldItems = oldRawItems is List
+          ? oldRawItems
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList()
+          : <Map<String, dynamic>>[];
+
+      final cleanedItems = splitItems.map((item) {
+        final rawPaidAt = item['paid_at'];
+        final rawCreatedAt = item['created_at'];
+
+        return {
+          'title': (item['title'] ?? '').toString().trim(),
+          'amount': _toDouble(item['amount']),
+          'paid_at': rawPaidAt is Timestamp
+              ? rawPaidAt
+              : rawPaidAt is DateTime
+                  ? Timestamp.fromDate(rawPaidAt)
+                  : Timestamp.now(),
+          'bankAccountId': item['bankAccountId'],
+          'bankAccountName': item['bankAccountName'],
+          'created_at': rawCreatedAt is Timestamp
+              ? rawCreatedAt
+              : rawCreatedAt is DateTime
+                  ? Timestamp.fromDate(rawCreatedAt)
+                  : Timestamp.now(),
+        };
+      }).toList();
+
+      final Map<String, double> oldAccountTotals = {};
+      final Map<String, double> newAccountTotals = {};
+
+      for (final item in oldItems) {
+        final accountId = item['bankAccountId']?.toString();
+
+        if (accountId == null || accountId.trim().isEmpty) continue;
+
+        oldAccountTotals[accountId] =
+            (oldAccountTotals[accountId] ?? 0.0) + _toDouble(item['amount']);
+      }
+
+      for (final item in cleanedItems) {
+        final accountId = item['bankAccountId']?.toString();
+
+        if (accountId == null || accountId.trim().isEmpty) continue;
+
+        newAccountTotals[accountId] =
+            (newAccountTotals[accountId] ?? 0.0) + _toDouble(item['amount']);
+      }
+
+      final accountIds = <String>{
+        ...oldAccountTotals.keys,
+        ...newAccountTotals.keys,
       };
-    }).toList();
 
-    await expensesRef.doc(expenseId).update({
-      'split_items': cleanedItems,
-      'updated_at': FieldValue.serverTimestamp(),
+      final accountSnapshots = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+
+      for (final accountId in accountIds) {
+        final accountRef = bankAccountsRef.doc(accountId);
+        final accountSnapshot = await transaction.get(accountRef);
+        accountSnapshots[accountId] = accountSnapshot;
+      }
+
+      transaction.update(docRef, {
+        'split_items': cleanedItems,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      for (final accountId in accountIds) {
+        final oldTotal = oldAccountTotals[accountId] ?? 0.0;
+        final newTotal = newAccountTotals[accountId] ?? 0.0;
+        final difference = oldTotal - newTotal;
+
+        if (difference == 0) continue;
+
+        final accountSnapshot = accountSnapshots[accountId];
+
+        if (accountSnapshot == null || !accountSnapshot.exists) continue;
+
+        final accountRef = bankAccountsRef.doc(accountId);
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance + difference,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     await _refreshWatchSummarySafely();
@@ -318,7 +979,67 @@ class FinanceService {
   Future<void> deleteExpense({
     required String expenseId,
   }) async {
-    await expensesRef.doc(expenseId).delete();
+    await _db.runTransaction((transaction) async {
+      final expenseRef = expensesRef.doc(expenseId);
+      final expenseSnapshot = await transaction.get(expenseRef);
+
+      if (!expenseSnapshot.exists) return;
+
+      final data = expenseSnapshot.data() ?? {};
+      final type = (data['type'] ?? 'standard').toString();
+
+      final Map<String, double> amountsToRestore = {};
+
+      if (type == 'planned') {
+        final splitItems = data['split_items'];
+
+        if (splitItems is List) {
+          for (final item in splitItems) {
+            if (item is! Map) continue;
+
+            final accountId = item['bankAccountId']?.toString();
+
+            if (accountId == null || accountId.trim().isEmpty) continue;
+
+            amountsToRestore[accountId] =
+                (amountsToRestore[accountId] ?? 0.0) +
+                    _toDouble(item['amount']);
+          }
+        }
+      } else {
+        final isPaid = data['is_paid'] == true;
+        final accountId = data['bankAccountId']?.toString();
+
+        if (isPaid && accountId != null && accountId.trim().isNotEmpty) {
+          amountsToRestore[accountId] = _toDouble(data['amount']);
+        }
+      }
+
+      final accountSnapshots = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+
+      for (final accountId in amountsToRestore.keys) {
+        final accountRef = bankAccountsRef.doc(accountId);
+        final accountSnapshot = await transaction.get(accountRef);
+        accountSnapshots[accountId] = accountSnapshot;
+      }
+
+      transaction.delete(expenseRef);
+
+      for (final entry in amountsToRestore.entries) {
+        final accountSnapshot = accountSnapshots[entry.key];
+
+        if (accountSnapshot == null || !accountSnapshot.exists) continue;
+
+        final accountRef = bankAccountsRef.doc(entry.key);
+        final accountData = accountSnapshot.data() ?? {};
+        final currentBalance = _toDouble(accountData['balance']);
+
+        transaction.update(accountRef, {
+          'balance': currentBalance + entry.value,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
+    });
 
     await _refreshWatchSummarySafely();
   }
@@ -418,6 +1139,32 @@ class FinanceService {
     await _refreshWatchSummarySafely();
   }
 
+  Future<double> _getTotalBankBalance() async {
+    final snapshot = await bankAccountsRef.get();
+
+    double total = 0.0;
+
+    for (final doc in snapshot.docs) {
+      total += _toDouble(doc.data()['balance']);
+    }
+
+    return total;
+  }
+
+  Future<List<Map<String, dynamic>>> _getBankAccountsForAI() async {
+    final snapshot = await bankAccountsRef.orderBy('created_at').get();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return {
+        'id': doc.id,
+        'name': (data['name'] ?? 'Conto').toString(),
+        'balance': _toDouble(data['balance']),
+      };
+    }).toList();
+  }
+
   Future<Map<String, dynamic>> getWatchSummary() async {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month);
@@ -438,6 +1185,8 @@ class FinanceService {
 
     final goalsSnapshot =
         await goalsRef.where('status', isEqualTo: 'active').get();
+
+    final totalBankBalance = await _getTotalBankBalance();
 
     double monthlyIncome = 0.0;
     double monthlyExpenses = 0.0;
@@ -523,8 +1272,7 @@ class FinanceService {
       mainGoalTitle = (goal['title'] ?? '').toString();
       mainGoalTargetAmount = _toDouble(goal['target_amount']);
       mainGoalCurrentAmount = _toDouble(goal['current_amount']);
-      mainGoalRemainingAmount =
-          mainGoalTargetAmount - mainGoalCurrentAmount;
+      mainGoalRemainingAmount = mainGoalTargetAmount - mainGoalCurrentAmount;
 
       if (mainGoalRemainingAmount < 0) {
         mainGoalRemainingAmount = 0.0;
@@ -542,6 +1290,7 @@ class FinanceService {
 
     final double totalExpenses = monthlyExpenses + monthlyPlannedExpenses;
     final double remainingBudget = monthlyIncome - totalExpenses;
+    final double remainingBudgetWithBank = totalBankBalance - totalExpenses;
 
     return {
       'monthly_income': monthlyIncome,
@@ -549,6 +1298,8 @@ class FinanceService {
       'monthly_planned_expenses': monthlyPlannedExpenses,
       'total_monthly_expenses': totalExpenses,
       'remaining_budget': remainingBudget,
+      'total_bank_balance': totalBankBalance,
+      'remaining_budget_with_bank': remainingBudgetWithBank,
       'active_goals': activeGoals,
       'main_goal_title': mainGoalTitle,
       'main_goal_target_amount': mainGoalTargetAmount,
@@ -596,6 +1347,13 @@ class FinanceService {
 
     final expensesSnapshot = await expensesRef.get();
     final goalsSnapshot = await goalsRef.get();
+    final bankAccounts = await _getBankAccountsForAI();
+
+    double totalBankBalance = 0.0;
+
+    for (final account in bankAccounts) {
+      totalBankBalance += _toDouble(account['balance']);
+    }
 
     double monthlyIncome = 0.0;
     double previousMonthlyIncome = 0.0;
@@ -777,13 +1535,25 @@ class FinanceService {
         previousPlannedExpenses;
 
     final double availableBudget = monthlyIncome - totalExpenses;
+    final double availableBudgetWithBank = totalBankBalance - totalExpenses;
 
-    final double safetyBuffer = monthlyIncome > 0 ? monthlyIncome * 0.10 : 0.0;
+    final double safetyBuffer = monthlyIncome > 0
+        ? monthlyIncome * 0.10
+        : totalBankBalance > 0
+            ? totalBankBalance * 0.05
+            : 0.0;
+
     final double spendableBudget = availableBudget - safetyBuffer;
+    final double spendableBudgetWithBank =
+        availableBudgetWithBank - safetyBuffer;
 
     final double dailyAvailable = remainingDaysInMonth > 0
         ? availableBudget / remainingDaysInMonth
         : availableBudget;
+
+    final double dailyAvailableWithBank = remainingDaysInMonth > 0
+        ? availableBudgetWithBank / remainingDaysInMonth
+        : availableBudgetWithBank;
 
     final sortedCategories = categoryTotals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -870,8 +1640,11 @@ class FinanceService {
       unpaidExpenses: unpaidExpenses,
       plannedExpenses: plannedExpenses,
       availableBudget: availableBudget,
+      availableBudgetWithBank: availableBudgetWithBank,
+      totalBankBalance: totalBankBalance,
       safetyBuffer: safetyBuffer,
       spendableBudget: spendableBudget,
+      spendableBudgetWithBank: spendableBudgetWithBank,
       previousTotalExpenses: previousTotalExpenses,
       currentTotalExpenses: totalExpenses,
       topCategoryName: topCategoryName,
@@ -884,13 +1657,17 @@ class FinanceService {
       totalExpenses: totalExpenses,
       unpaidExpenses: unpaidExpenses,
       availableBudget: availableBudget,
+      availableBudgetWithBank: availableBudgetWithBank,
+      totalBankBalance: totalBankBalance,
       activeGoals: activeGoals.length,
     );
 
     final mood = _financialMood(
       score: financialHealthScore,
       availableBudget: availableBudget,
+      availableBudgetWithBank: availableBudgetWithBank,
       monthlyIncome: monthlyIncome,
+      totalBankBalance: totalBankBalance,
     );
 
     return {
@@ -906,9 +1683,14 @@ class FinanceService {
       'previous_planned_expenses': previousPlannedExpenses,
       'previous_total_expenses': previousTotalExpenses,
       'available_budget': availableBudget,
+      'total_bank_balance': totalBankBalance,
+      'available_budget_with_bank': availableBudgetWithBank,
       'safety_buffer': safetyBuffer,
       'spendable_budget': spendableBudget < 0 ? 0.0 : spendableBudget,
+      'spendable_budget_with_bank':
+          spendableBudgetWithBank < 0 ? 0.0 : spendableBudgetWithBank,
       'daily_available': dailyAvailable,
+      'daily_available_with_bank': dailyAvailableWithBank,
       'days_in_month': daysInCurrentMonth,
       'current_day': currentDay,
       'remaining_days_in_month': remainingDaysInMonth,
@@ -919,6 +1701,7 @@ class FinanceService {
       'main_goal': mainGoal,
       'upcoming_expenses': upcomingExpenses,
       'unpaid_expenses_list': unpaidExpensesList,
+      'bank_accounts': bankAccounts,
       'suggestions': suggestions,
       'financial_health_score': financialHealthScore,
       'financial_mood': mood,
@@ -947,9 +1730,9 @@ class FinanceService {
     final summary = await getWatchSummary();
 
     await watchSummaryRef.doc('current').set(
-      summary,
-      SetOptions(merge: true),
-    );
+          summary,
+          SetOptions(merge: true),
+        );
 
     await _watchSyncService.sendSummaryToWatch(
       _cleanSummaryForWatch(summary),
@@ -961,7 +1744,7 @@ class FinanceService {
       await updateWatchSummary();
     } catch (_) {
       // Evita che un errore nel riepilogo Watch blocchi
-      // il salvataggio principale di entrate, spese o obiettivi.
+      // il salvataggio principale di entrate, spese, conti o obiettivi.
     }
   }
 
@@ -971,8 +1754,11 @@ class FinanceService {
     required double unpaidExpenses,
     required double plannedExpenses,
     required double availableBudget,
+    required double availableBudgetWithBank,
+    required double totalBankBalance,
     required double safetyBuffer,
     required double spendableBudget,
+    required double spendableBudgetWithBank,
     required double previousTotalExpenses,
     required double currentTotalExpenses,
     required String topCategoryName,
@@ -981,15 +1767,25 @@ class FinanceService {
   }) {
     final suggestions = <String>[];
 
-    if (monthlyIncome <= 0) {
+    if (monthlyIncome <= 0 && totalBankBalance <= 0) {
       suggestions.add(
-        'Non hai ancora registrato entrate per questo mese. Inseriscile per ricevere consigli più precisi.',
+        'Non hai ancora registrato entrate o soldi disponibili in banca. Inserisci almeno un conto o un’entrata per ricevere consigli più precisi.',
       );
 
       return suggestions;
     }
 
-    if (availableBudget < 0) {
+    if (availableBudget < 0 && totalBankBalance > 0) {
+      if (availableBudgetWithBank >= 0) {
+        suggestions.add(
+          'Questo mese le uscite superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, ma hai abbastanza liquidità in banca per coprire la differenza. Attenzione però: stai consumando soldi già disponibili.',
+        );
+      } else {
+        suggestions.add(
+          'Questo mese le uscite superano le entrate e anche considerando i soldi in banca il margine resta negativo. Prima di fare nuove spese, prova a ridurre o rimandare quelle non urgenti.',
+        );
+      }
+    } else if (availableBudget < 0) {
       suggestions.add(
         'Questo mese le uscite superano le entrate. Prima di fare nuove spese, prova a ridurre o rimandare quelle non urgenti.',
       );
@@ -1000,6 +1796,12 @@ class FinanceService {
     } else {
       suggestions.add(
         'La situazione del mese è sotto controllo. Puoi gestire le prossime spese mantenendo comunque un margine di sicurezza.',
+      );
+    }
+
+    if (totalBankBalance > 0) {
+      suggestions.add(
+        'Al momento hai ${_formatMoneyText(totalBankBalance)} disponibili nei conti registrati.',
       );
     }
 
@@ -1043,14 +1845,17 @@ class FinanceService {
       final daysRemaining = mainGoal['days_remaining'];
 
       if (goalTitle.isNotEmpty && remainingAmount > 0) {
-        if (spendableBudget > 0) {
+        final usableGoalBudget =
+            spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
+        if (usableGoalBudget > 0) {
           final suggestedSaving = _suggestedGoalSaving(
-            spendableBudget: spendableBudget,
+            spendableBudget: usableGoalBudget,
             remainingGoalAmount: remainingAmount,
           );
 
           suggestions.add(
-            'Per l’obiettivo "$goalTitle", potresti mettere da parte circa ${_formatMoneyText(suggestedSaving)} questo mese senza toccare il margine di sicurezza.',
+            'Per l’obiettivo "$goalTitle", potresti mettere da parte circa ${_formatMoneyText(suggestedSaving)} questo mese senza toccare troppo il margine di sicurezza.',
           );
         } else {
           suggestions.add(
@@ -1074,35 +1879,47 @@ class FinanceService {
     required double totalExpenses,
     required double unpaidExpenses,
     required double availableBudget,
+    required double availableBudgetWithBank,
+    required double totalBankBalance,
     required int activeGoals,
   }) {
-    if (monthlyIncome <= 0) return 35;
+    if (monthlyIncome <= 0 && totalBankBalance <= 0) return 35;
 
     int score = 70;
 
-    final double expenseRatio = totalExpenses / monthlyIncome;
+    if (monthlyIncome > 0) {
+      final double expenseRatio = totalExpenses / monthlyIncome;
 
-    if (expenseRatio <= 0.50) {
-      score += 15;
-    } else if (expenseRatio <= 0.75) {
-      score += 5;
-    } else if (expenseRatio <= 0.90) {
-      score -= 8;
+      if (expenseRatio <= 0.50) {
+        score += 15;
+      } else if (expenseRatio <= 0.75) {
+        score += 5;
+      } else if (expenseRatio <= 0.90) {
+        score -= 8;
+      } else {
+        score -= 18;
+      }
     } else {
-      score -= 18;
-    }
-
-    if (availableBudget < 0) {
-      score -= 25;
-    } else if (availableBudget >= monthlyIncome * 0.20) {
-      score += 10;
-    }
-
-    if (unpaidExpenses > monthlyIncome * 0.35) {
       score -= 10;
     }
 
-    if (activeGoals > 0 && availableBudget > 0) {
+    if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+      score -= 10;
+    } else if (availableBudgetWithBank < 0) {
+      score -= 25;
+    } else if (monthlyIncome > 0 && availableBudget >= monthlyIncome * 0.20) {
+      score += 10;
+    }
+
+    if (monthlyIncome > 0 && unpaidExpenses > monthlyIncome * 0.35) {
+      score -= 10;
+    }
+
+    if (totalBankBalance > 0) {
+      score += 5;
+    }
+
+    if (activeGoals > 0 && availableBudgetWithBank > 0) {
       score += 5;
     }
 
@@ -1112,14 +1929,20 @@ class FinanceService {
   String _financialMood({
     required int score,
     required double availableBudget,
+    required double availableBudgetWithBank,
     required double monthlyIncome,
+    required double totalBankBalance,
   }) {
-    if (monthlyIncome <= 0) {
+    if (monthlyIncome <= 0 && totalBankBalance <= 0) {
       return 'Da configurare';
     }
 
-    if (availableBudget < 0) {
-      return 'Attenzione';
+    if (availableBudgetWithBank < 0) {
+      return 'Critica';
+    }
+
+    if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+      return 'Da controllare';
     }
 
     if (score >= 80) {
@@ -1150,9 +1973,16 @@ class FinanceService {
     final totalExpenses = _toDouble(snapshot['total_expenses']);
     final previousTotalExpenses = _toDouble(snapshot['previous_total_expenses']);
     final availableBudget = _toDouble(snapshot['available_budget']);
+    final totalBankBalance = _toDouble(snapshot['total_bank_balance']);
+    final availableBudgetWithBank =
+        _toDouble(snapshot['available_budget_with_bank']);
     final safetyBuffer = _toDouble(snapshot['safety_buffer']);
     final spendableBudget = _toDouble(snapshot['spendable_budget']);
+    final spendableBudgetWithBank =
+        _toDouble(snapshot['spendable_budget_with_bank']);
     final dailyAvailable = _toDouble(snapshot['daily_available']);
+    final dailyAvailableWithBank =
+        _toDouble(snapshot['daily_available_with_bank']);
     final topCategoryName = (snapshot['top_category_name'] ?? '').toString();
     final topCategoryAmount = _toDouble(snapshot['top_category_amount']);
     final mood = (snapshot['financial_mood'] ?? '').toString();
@@ -1182,57 +2012,85 @@ class FinanceService {
         lowerQuestion.contains('categoria') ||
         lowerQuestion.contains('uscite');
 
+    final askedAboutBank = lowerQuestion.contains('banca') ||
+        lowerQuestion.contains('conto') ||
+        lowerQuestion.contains('conti') ||
+        lowerQuestion.contains('saldo') ||
+        lowerQuestion.contains('liquidità');
+
     final amountInQuestion = _extractFirstAmountFromText(lowerQuestion);
 
-    if (monthlyIncome <= 0) {
-      return 'Per risponderti bene ho bisogno che tu inserisca almeno un’entrata per questo mese. Al momento non vedo entrate registrate, quindi non posso calcolare un budget realistico.';
+    if (monthlyIncome <= 0 && totalBankBalance <= 0) {
+      return 'Per risponderti bene ho bisogno che tu inserisca almeno un’entrata o un conto bancario con il saldo disponibile. Al momento non vedo soldi registrati, quindi non posso calcolare un budget realistico.';
+    }
+
+    if (askedAboutBank) {
+      if (totalBankBalance <= 0) {
+        return 'Al momento non vedo conti bancari con saldo disponibile. Aggiungi almeno un conto, ad esempio “Conto principale”, “Revolut” o “Postepay”, così posso considerare anche i soldi già presenti in banca.';
+      }
+
+      if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+        return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Questo mese le spese superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, però la liquidità in banca riesce a coprire la differenza. Dopo le spese previste, il margine stimato considerando la banca è ${_formatMoneyText(availableBudgetWithBank)}.';
+      }
+
+      return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Considerando le spese del mese, il margine stimato con la banca è ${_formatMoneyText(availableBudgetWithBank)}.';
     }
 
     if (askedAboutAffordability) {
+      final realSpendableBudget =
+          spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
       if (amountInQuestion != null && amountInQuestion > 0) {
         final double remainingAfterPurchase =
-            availableBudget - amountInQuestion;
+            availableBudgetWithBank - amountInQuestion;
 
         final double remainingAfterSafety =
             remainingAfterPurchase - safetyBuffer;
 
         if (remainingAfterPurchase < 0) {
-          return 'Guardando i tuoi dati, non te lo consiglio. Hai ${_formatMoneyText(availableBudget)} disponibili, ma questa spesa sarebbe di ${_formatMoneyText(amountInQuestion)}. Andresti sotto di circa ${_formatMoneyText(remainingAfterPurchase.abs())}. Prima conviene ridurre qualche spesa o aspettare una nuova entrata.';
+          return 'Guardando i tuoi dati, non te lo consiglio. Considerando anche i soldi in banca hai un margine stimato di ${_formatMoneyText(availableBudgetWithBank)}, ma questa spesa sarebbe di ${_formatMoneyText(amountInQuestion)}. Andresti sotto di circa ${_formatMoneyText(remainingAfterPurchase.abs())}.';
+        }
+
+        if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+          return 'Puoi coprirla solo usando i soldi già presenti in banca. Le entrate del mese non bastano, perché il budget mensile è negativo di circa ${_formatMoneyText(availableBudget.abs())}. Dopo una spesa da ${_formatMoneyText(amountInQuestion)}, considerando la banca, ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}.';
         }
 
         if (remainingAfterSafety < 0) {
-          return 'Tecnicamente puoi farlo, perché hai ${_formatMoneyText(availableBudget)} disponibili. Però dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero ${_formatMoneyText(remainingAfterPurchase)}, andando sotto il margine di sicurezza consigliato di ${_formatMoneyText(safetyBuffer)}. Io ti direi: fallo solo se è davvero necessario.';
+          return 'Tecnicamente puoi farlo, perché considerando anche la banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili. Però dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero ${_formatMoneyText(remainingAfterPurchase)}, andando sotto il margine di sicurezza consigliato di ${_formatMoneyText(safetyBuffer)}. Io ti direi: fallo solo se è davvero necessario.';
         }
 
-        return 'Sì, puoi permettertelo. Hai ${_formatMoneyText(availableBudget)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}. Resti anche sopra il margine di sicurezza consigliato.';
+        return 'Sì, puoi permettertelo. Considerando anche i soldi in banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}.';
       }
 
-      if (spendableBudget <= 0) {
-        return 'In questo momento non ti consiglio nuove spese extra. Hai ${_formatMoneyText(availableBudget)} disponibili, ma il margine realmente spendibile è basso perché sarebbe meglio tenere circa ${_formatMoneyText(safetyBuffer)} come sicurezza.';
+      if (realSpendableBudget <= 0) {
+        return 'In questo momento non ti consiglio nuove spese extra. Considerando anche la banca, il margine realmente spendibile è basso perché sarebbe meglio tenere circa ${_formatMoneyText(safetyBuffer)} come sicurezza.';
       }
 
-      return 'In questo momento puoi spendere circa ${_formatMoneyText(spendableBudget)} senza intaccare il margine di sicurezza. Oltre quella cifra, meglio valutare con attenzione.';
+      return 'In questo momento puoi spendere circa ${_formatMoneyText(realSpendableBudget)} senza intaccare troppo il margine di sicurezza. Questa stima considera anche i soldi presenti in banca.';
     }
 
     if (askedAboutSaving) {
-      if (spendableBudget <= 0) {
-        return 'Per ora non ti consiglio di mettere soldi da parte: hai ${_formatMoneyText(availableBudget)} disponibili, ma il margine di sicurezza consigliato è circa ${_formatMoneyText(safetyBuffer)}. Prima sistemerei le spese del mese.';
+      final realSpendableBudget =
+          spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
+      if (realSpendableBudget <= 0) {
+        return 'Per ora non ti consiglio di mettere soldi da parte: considerando entrate, spese e soldi in banca, il margine è basso. Prima sistemerei le spese del mese.';
       }
 
       if (mainGoal is Map<String, dynamic>) {
         final goalTitle = (mainGoal['title'] ?? '').toString();
         final remainingAmount = _toDouble(mainGoal['remaining_amount']);
         final suggestedSaving = _suggestedGoalSaving(
-          spendableBudget: spendableBudget,
+          spendableBudget: realSpendableBudget,
           remainingGoalAmount: remainingAmount,
         );
 
         if (goalTitle.isNotEmpty) {
-          return 'Secondo me questo mese puoi mettere da parte circa ${_formatMoneyText(suggestedSaving)} per "$goalTitle". Hai ${_formatMoneyText(availableBudget)} disponibili, ma terrei comunque ${_formatMoneyText(safetyBuffer)} come margine di sicurezza.';
+          return 'Secondo me questo mese puoi mettere da parte circa ${_formatMoneyText(suggestedSaving)} per "$goalTitle". Ho considerato sia il budget del mese sia i soldi disponibili in banca.';
         }
       }
 
-      final double suggestedSaving = spendableBudget * 0.50;
+      final double suggestedSaving = realSpendableBudget * 0.50;
 
       return 'Questo mese puoi provare a mettere da parte circa ${_formatMoneyText(suggestedSaving)}. È una cifra prudente perché lascia comunque un margine per eventuali imprevisti.';
     }
@@ -1253,10 +2111,14 @@ class FinanceService {
     }
 
     if (askedAboutSituation) {
-      return 'La tua situazione attuale è "$mood". Hai entrate per ${_formatMoneyText(monthlyIncome)}, spese già pagate per ${_formatMoneyText(paidExpenses)}, spese ancora da pagare per ${_formatMoneyText(unpaidExpenses)} e spese pianificate per ${_formatMoneyText(plannedExpenses)}. Il budget disponibile stimato è ${_formatMoneyText(availableBudget)}. Ti consiglio di non scendere sotto ${_formatMoneyText(safetyBuffer)} di margine.';
+      if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+        return 'La tua situazione attuale è "$mood". Le entrate del mese sono ${_formatMoneyText(monthlyIncome)}, mentre le uscite totali previste sono ${_formatMoneyText(totalExpenses)}. Il budget mensile è negativo di ${_formatMoneyText(availableBudget.abs())}, però hai ${_formatMoneyText(totalBankBalance)} in banca: quindi puoi coprire la differenza, ma stai usando liquidità già disponibile.';
+      }
+
+      return 'La tua situazione attuale è "$mood". Hai entrate per ${_formatMoneyText(monthlyIncome)}, spese già pagate per ${_formatMoneyText(paidExpenses)}, spese ancora da pagare per ${_formatMoneyText(unpaidExpenses)} e spese pianificate per ${_formatMoneyText(plannedExpenses)}. Il budget disponibile del mese è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}.';
     }
 
-    return 'Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Il budget disponibile stimato è ${_formatMoneyText(availableBudget)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(dailyAvailable)} al giorno per il resto del mese, ma ti consiglio di mantenere un margine di sicurezza di almeno ${_formatMoneyText(safetyBuffer)}.';
+    return 'Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Il budget mensile stimato è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(dailyAvailableWithBank > 0 ? dailyAvailableWithBank : dailyAvailable)} al giorno per il resto del mese, mantenendo prudenza.';
   }
 
   String currentVsPreviousSentence({
@@ -1333,6 +2195,21 @@ class FinanceService {
         cleaned[entry.key] = DateTime.now().toIso8601String();
       } else if (value == null) {
         cleaned[entry.key] = '';
+      } else if (value is List) {
+        cleaned[entry.key] = value.map((item) {
+          if (item is Map) {
+            return item.map(
+              (key, mapValue) => MapEntry(
+                key.toString(),
+                mapValue is Timestamp
+                    ? mapValue.toDate().toIso8601String()
+                    : mapValue,
+              ),
+            );
+          }
+
+          return item;
+        }).toList();
       } else {
         cleaned[entry.key] = value;
       }

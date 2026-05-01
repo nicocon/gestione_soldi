@@ -1,0 +1,2240 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+enum PocketPlanThemeMode {
+  system,
+  light,
+  dark,
+}
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  bool _budgetAlertsEnabled = true;
+  bool _goalAlertsEnabled = true;
+  bool _watchSyncEnabled = true;
+  bool _aiTipsEnabled = true;
+
+  bool _isLoadingProfile = true;
+
+  String _profileName = '';
+  String _profileSurname = '';
+  String _profileCountry = '';
+  String _profilePhone = '';
+  DateTime? _profileBirthDate;
+
+  PocketPlanThemeMode _selectedThemeMode = PocketPlanThemeMode.system;
+
+  User? get _user => _auth.currentUser;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  PocketPlanThemeMode _themeModeFromString(String? value) {
+    switch (value) {
+      case 'light':
+        return PocketPlanThemeMode.light;
+      case 'dark':
+        return PocketPlanThemeMode.dark;
+      case 'system':
+      default:
+        return PocketPlanThemeMode.system;
+    }
+  }
+
+  String _themeModeToString(PocketPlanThemeMode value) {
+    switch (value) {
+      case PocketPlanThemeMode.light:
+        return 'light';
+      case PocketPlanThemeMode.dark:
+        return 'dark';
+      case PocketPlanThemeMode.system:
+        return 'system';
+    }
+  }
+
+  String get _themeModeLabel {
+    switch (_selectedThemeMode) {
+      case PocketPlanThemeMode.light:
+        return 'Chiaro';
+      case PocketPlanThemeMode.dark:
+        return 'Scuro';
+      case PocketPlanThemeMode.system:
+        return 'Auto';
+    }
+  }
+
+  String get _themeModeSubtitle {
+    switch (_selectedThemeMode) {
+      case PocketPlanThemeMode.light:
+        return 'PocketPlan usa sempre il tema chiaro.';
+      case PocketPlanThemeMode.dark:
+        return 'PocketPlan usa sempre il tema scuro.';
+      case PocketPlanThemeMode.system:
+        return 'PocketPlan segue il tema del dispositivo.';
+    }
+  }
+
+  Future<void> _loadUserProfile() async {
+    final user = _user;
+
+    if (user == null) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingProfile = false;
+      });
+
+      return;
+    }
+
+    try {
+      final doc = await _db.collection('users').doc(user.uid).get();
+      final data = doc.data();
+
+      final displayName = user.displayName?.trim() ?? '';
+      final parts = displayName
+          .split(' ')
+          .where((e) => e.trim().isNotEmpty)
+          .toList();
+
+      DateTime? birthDate;
+
+      final rawBirthDate = data?['birth_date'];
+
+      if (rawBirthDate is Timestamp) {
+        birthDate = rawBirthDate.toDate();
+      } else if (rawBirthDate is String && rawBirthDate.trim().isNotEmpty) {
+        birthDate = DateTime.tryParse(rawBirthDate);
+      }
+
+      final savedThemeMode = data?['theme_mode']?.toString();
+
+      if (!mounted) return;
+
+      setState(() {
+        _profileName = (data?['name'] ?? '').toString().trim();
+        _profileSurname = (data?['surname'] ?? '').toString().trim();
+        _profileCountry = (data?['country'] ?? '').toString().trim();
+        _profilePhone = (data?['phone'] ?? '').toString().trim();
+        _profileBirthDate = birthDate;
+        _selectedThemeMode = _themeModeFromString(savedThemeMode);
+
+        if (_profileName.isEmpty && parts.isNotEmpty) {
+          _profileName = parts.first;
+        }
+
+        if (_profileSurname.isEmpty && parts.length >= 2) {
+          _profileSurname = parts.sublist(1).join(' ');
+        }
+
+        _isLoadingProfile = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingProfile = false;
+      });
+    }
+  }
+
+  Future<void> _saveThemeMode(PocketPlanThemeMode themeMode) async {
+    final user = _user;
+
+    if (user == null) {
+      await _showInfoDialog(
+        title: 'Account non disponibile',
+        description:
+            'Non riesco a salvare il tema perché non trovo l’utente corrente.',
+        icon: Icons.person_off_rounded,
+      );
+      return;
+    }
+
+    final oldThemeMode = _selectedThemeMode;
+
+    setState(() {
+      _selectedThemeMode = themeMode;
+    });
+
+    try {
+      await _db.collection('users').doc(user.uid).set(
+        {
+          'theme_mode': _themeModeToString(themeMode),
+          'updated_at': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Tema aggiornato',
+        description:
+            'Preferenza salvata correttamente. Il tema verrà applicato in tutta l’app.',
+        icon: Icons.check_circle_rounded,
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _selectedThemeMode = oldThemeMode;
+      });
+
+      await _showInfoDialog(
+        title: 'Errore',
+        description: 'Non sono riuscito a salvare il tema. Riprova tra poco.',
+        icon: Icons.error_outline_rounded,
+      );
+    }
+  }
+
+  Future<void> _showThemeDialog() async {
+    final colors = _SettingsColors.of(context);
+    PocketPlanThemeMode tempThemeMode = _selectedThemeMode;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> confirmTheme() async {
+              Navigator.pop(dialogContext);
+              await _saveThemeMode(tempThemeMode);
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _DialogIcon(
+                            icon: Icons.palette_rounded,
+                            colors: colors,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Tema app',
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Scegli come vuoi visualizzare PocketPlan.',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close_rounded),
+                            color: colors.textSecondary,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      _ThemeOptionTile(
+                        icon: Icons.phone_android_rounded,
+                        title: 'Automatico',
+                        subtitle:
+                            'Segue il tema chiaro o scuro del dispositivo.',
+                        selected:
+                            tempThemeMode == PocketPlanThemeMode.system,
+                        onTap: () {
+                          setDialogState(() {
+                            tempThemeMode = PocketPlanThemeMode.system;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      _ThemeOptionTile(
+                        icon: Icons.light_mode_rounded,
+                        title: 'Chiaro',
+                        subtitle: 'Interfaccia chiara, pulita e luminosa.',
+                        selected: tempThemeMode == PocketPlanThemeMode.light,
+                        onTap: () {
+                          setDialogState(() {
+                            tempThemeMode = PocketPlanThemeMode.light;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      _ThemeOptionTile(
+                        icon: Icons.dark_mode_rounded,
+                        title: 'Scuro',
+                        subtitle: 'Interfaccia scura, più comoda la sera.',
+                        selected: tempThemeMode == PocketPlanThemeMode.dark,
+                        onTap: () {
+                          setDialogState(() {
+                            tempThemeMode = PocketPlanThemeMode.dark;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 22),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 50,
+                              child: OutlinedButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: colors.textPrimary,
+                                  side: BorderSide(
+                                    color: colors.border,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                child: const Text('Annulla'),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SizedBox(
+                              height: 50,
+                              child: ElevatedButton(
+                                onPressed: confirmTheme,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: colors.primary,
+                                  foregroundColor: colors.primaryText,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                child: const Text('Salva'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String get _displayName {
+    final fullName = '$_profileName $_profileSurname'.trim();
+
+    if (fullName.isNotEmpty) {
+      return fullName;
+    }
+
+    final user = _user;
+    final name = user?.displayName?.trim();
+
+    if (name != null && name.isNotEmpty) {
+      return name;
+    }
+
+    final email = user?.email ?? '';
+
+    if (email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'Utente PocketPlan';
+  }
+
+  String get _email {
+    final email = _user?.email?.trim();
+
+    if (email != null && email.isNotEmpty) {
+      return email;
+    }
+
+    return 'Email non disponibile';
+  }
+
+  String get _initials {
+    final name = _displayName.trim();
+
+    if (name.isEmpty) return 'P';
+
+    final parts = name
+        .split(' ')
+        .where((part) => part.trim().isNotEmpty)
+        .toList();
+
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+
+    return name[0].toUpperCase();
+  }
+
+  bool _isMobile(BuildContext context) {
+    return MediaQuery.sizeOf(context).width < 700;
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '';
+
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+
+    return '$day/$month/$year';
+  }
+
+  Future<void> _showInfoDialog({
+    required String title,
+    required String description,
+    IconData icon = Icons.info_rounded,
+  }) async {
+    final colors = _SettingsColors.of(context);
+
+    await showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          backgroundColor: colors.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Row(
+            children: [
+              _DialogIcon(
+                icon: icon,
+                colors: colors,
+                size: 42,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            description,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          actions: [
+            SizedBox(
+              height: 46,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.primary,
+                  foregroundColor: colors.primaryText,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                child: const Text('Ho capito'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showProfileDialog() async {
+    final user = _user;
+
+    if (user == null) {
+      await _showInfoDialog(
+        title: 'Account non disponibile',
+        description:
+            'Non riesco a trovare l’utente corrente. Prova a uscire e rientrare nell’app.',
+        icon: Icons.person_off_rounded,
+      );
+      return;
+    }
+
+    final colors = _SettingsColors.of(context);
+    final formKey = GlobalKey<FormState>();
+
+    final nameController = TextEditingController(text: _profileName);
+    final surnameController = TextEditingController(text: _profileSurname);
+    final countryController = TextEditingController(text: _profileCountry);
+    final phoneController = TextEditingController(text: _profilePhone);
+    final birthDateController = TextEditingController(
+      text: _formatDate(_profileBirthDate),
+    );
+
+    DateTime? selectedBirthDate = _profileBirthDate;
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: !isSaving,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> pickBirthDate() async {
+              final now = DateTime.now();
+
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: selectedBirthDate ??
+                    DateTime(now.year - 18, now.month, now.day),
+                firstDate: DateTime(1900),
+                lastDate: DateTime(now.year, now.month, now.day),
+                helpText: 'Seleziona data di nascita',
+                cancelText: 'Annulla',
+                confirmText: 'Conferma',
+                builder: (context, child) {
+                  return Theme(
+                    data: Theme.of(context).copyWith(
+                      colorScheme: colors.isDark
+                          ? const ColorScheme.dark(
+                              primary: Color(0xFF60A5FA),
+                              onPrimary: Color(0xFF0F172A),
+                              surface: Color(0xFF172033),
+                              onSurface: Color(0xFFF8FAFC),
+                            )
+                          : const ColorScheme.light(
+                              primary: Color(0xFF1677F2),
+                              onPrimary: Colors.white,
+                              surface: Colors.white,
+                              onSurface: Color(0xFF172033),
+                            ),
+                    ),
+                    child: child!,
+                  );
+                },
+              );
+
+              if (picked == null) return;
+
+              setDialogState(() {
+                selectedBirthDate = picked;
+                birthDateController.text = _formatDate(picked);
+              });
+            }
+
+            Future<void> saveProfile() async {
+              if (!formKey.currentState!.validate()) return;
+
+              final name = nameController.text.trim();
+              final surname = surnameController.text.trim();
+              final country = countryController.text.trim();
+              final phone = phoneController.text.trim();
+              final fullName = '$name $surname'.trim();
+
+              setDialogState(() {
+                isSaving = true;
+              });
+
+              try {
+                await user.updateDisplayName(fullName);
+                await user.reload();
+
+                await _db.collection('users').doc(user.uid).set(
+                  {
+                    'name': name,
+                    'surname': surname,
+                    'country': country,
+                    'phone': phone,
+                    'birth_date': selectedBirthDate == null
+                        ? null
+                        : Timestamp.fromDate(selectedBirthDate!),
+                    'email': user.email,
+                    'display_name': fullName,
+                    'updated_at': FieldValue.serverTimestamp(),
+                  },
+                  SetOptions(merge: true),
+                );
+
+                if (!mounted) return;
+
+                setState(() {
+                  _profileName = name;
+                  _profileSurname = surname;
+                  _profileCountry = country;
+                  _profilePhone = phone;
+                  _profileBirthDate = selectedBirthDate;
+                });
+
+                Navigator.pop(dialogContext);
+
+                await _showInfoDialog(
+                  title: 'Profilo aggiornato',
+                  description:
+                      'Le informazioni del profilo sono state salvate correttamente.',
+                  icon: Icons.check_circle_rounded,
+                );
+              } catch (_) {
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSaving = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore',
+                  description:
+                      'Non sono riuscito ad aggiornare il profilo. Riprova tra poco.',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: SingleChildScrollView(
+                    child: Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _DialogIcon(
+                                icon: Icons.badge_rounded,
+                                colors: colors,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Profilo personale',
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Modifica i dati del tuo account.',
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: isSaving
+                                    ? null
+                                    : () => Navigator.pop(dialogContext),
+                                icon: const Icon(Icons.close_rounded),
+                                color: colors.textSecondary,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 22),
+                          _ProfileTextField(
+                            controller: nameController,
+                            label: 'Nome',
+                            hint: 'Es. Nicola',
+                            icon: Icons.person_rounded,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Inserisci il nome';
+                              }
+
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: surnameController,
+                            label: 'Cognome',
+                            hint: 'Es. Consoli',
+                            icon: Icons.badge_outlined,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: birthDateController,
+                            label: 'Data di nascita',
+                            hint: 'Seleziona una data',
+                            icon: Icons.cake_rounded,
+                            readOnly: true,
+                            onTap: pickBirthDate,
+                            suffixIcon: Icons.calendar_month_rounded,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: countryController,
+                            label: 'Paese',
+                            hint: 'Es. Italia',
+                            icon: Icons.public_rounded,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: phoneController,
+                            label: 'Telefono',
+                            hint: 'Es. +39 333 1234567',
+                            icon: Icons.phone_rounded,
+                            keyboardType: TextInputType.phone,
+                          ),
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: colors.cardSoft,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: colors.border,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.email_rounded,
+                                  color: colors.textSecondary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _email,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: OutlinedButton(
+                                    onPressed: isSaving
+                                        ? null
+                                        : () => Navigator.pop(dialogContext),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: colors.textPrimary,
+                                      side: BorderSide(
+                                        color: colors.border,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    child: const Text('Annulla'),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: ElevatedButton(
+                                    onPressed: isSaving ? null : saveProfile,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: colors.primary,
+                                      foregroundColor: colors.primaryText,
+                                      disabledBackgroundColor:
+                                          colors.primary.withValues(alpha: 0.45),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    child: isSaving
+                                        ? SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.4,
+                                              color: colors.primaryText,
+                                            ),
+                                          )
+                                        : const Text('Salva'),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    nameController.dispose();
+    surnameController.dispose();
+    countryController.dispose();
+    phoneController.dispose();
+    birthDateController.dispose();
+  }
+
+  Future<void> _showDeleteDataDialog() async {
+    final colors = _SettingsColors.of(context);
+
+    await showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          backgroundColor: colors.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Text(
+            'Eliminare i dati?',
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: Text(
+            'Questa funzione verrà collegata più avanti. Prima di eliminare dati reali aggiungeremo una conferma sicura, così l’utente non rischia di cancellare tutto per errore.',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          actions: [
+            SizedBox(
+              height: 46,
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.textPrimary,
+                  side: BorderSide(
+                    color: colors.border,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                child: const Text('Chiudi'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _sendPasswordResetEmail() async {
+    final email = _user?.email;
+
+    if (email == null || email.trim().isEmpty) {
+      await _showInfoDialog(
+        title: 'Email non disponibile',
+        description:
+            'Non riesco a trovare l’email dell’account corrente. Più avanti potremo aggiungere una pagina dedicata per gestire meglio il profilo.',
+        icon: Icons.email_outlined,
+      );
+      return;
+    }
+
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Email inviata',
+        description:
+            'Ti abbiamo inviato un’email per reimpostare la password a $email.',
+        icon: Icons.mark_email_read_rounded,
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Errore',
+        description:
+            'Non sono riuscito a inviare l’email di recupero password. Riprova tra poco.',
+        icon: Icons.error_outline_rounded,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+    final isMobile = _isMobile(context);
+
+    return Scaffold(
+      backgroundColor: colors.scaffold,
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          isMobile ? 16 : 24,
+          isMobile ? 16 : 24,
+          isMobile ? 16 : 24,
+          isMobile ? 120 : 36,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1180),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SettingsHeader(
+                  displayName: _displayName,
+                  email: _email,
+                  initials: _initials,
+                  isLoadingProfile: _isLoadingProfile,
+                ),
+                SizedBox(height: isMobile ? 18 : 22),
+                _ResponsiveSettingsGrid(
+                  children: [
+                    _SettingsSection(
+                      title: 'Account',
+                      icon: Icons.person_rounded,
+                      children: [
+                        _SettingsActionTile(
+                          icon: Icons.badge_rounded,
+                          title: 'Profilo personale',
+                          subtitle: 'Modifica nome, cognome e dati personali.',
+                          onTap: _showProfileDialog,
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.workspace_premium_rounded,
+                          title: 'Piano attuale',
+                          subtitle:
+                              'Gratis · AI limitata a 3 domande al giorno.',
+                          trailing: const _PlanBadge(text: 'Free'),
+                          onTap: () => _showInfoDialog(
+                            title: 'Piano Premium',
+                            description:
+                                'Più avanti qui potremo aggiungere l’abbonamento con domande AI illimitate e funzioni avanzate.',
+                            icon: Icons.workspace_premium_rounded,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _SettingsSection(
+                      title: 'Preferenze',
+                      icon: Icons.tune_rounded,
+                      children: [
+                        _SettingsActionTile(
+                          icon: Icons.palette_rounded,
+                          title: 'Tema app',
+                          subtitle: _themeModeSubtitle,
+                          trailing: _PlanBadge(text: _themeModeLabel),
+                          onTap: _showThemeDialog,
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.euro_rounded,
+                          title: 'Valuta',
+                          subtitle: 'Valuta predefinita per entrate e spese.',
+                          trailing: const _PlanBadge(text: 'EUR'),
+                          onTap: () => _showInfoDialog(
+                            title: 'Valuta',
+                            description:
+                                'Per ora usiamo l’euro come valuta principale. Più avanti potremo rendere questa impostazione modificabile.',
+                            icon: Icons.euro_rounded,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _SettingsSection(
+                      title: 'Notifiche',
+                      icon: Icons.notifications_rounded,
+                      children: [
+                        _SettingsSwitchTile(
+                          icon: Icons.account_balance_wallet_rounded,
+                          title: 'Avvisi budget',
+                          subtitle:
+                              'Ricevi promemoria quando stai superando i limiti.',
+                          value: _budgetAlertsEnabled,
+                          onChanged: (value) {
+                            setState(() {
+                              _budgetAlertsEnabled = value;
+                            });
+                          },
+                        ),
+                        _SettingsSwitchTile(
+                          icon: Icons.flag_rounded,
+                          title: 'Avvisi obiettivi',
+                          subtitle:
+                              'Promemoria per seguire meglio i tuoi traguardi.',
+                          value: _goalAlertsEnabled,
+                          onChanged: (value) {
+                            setState(() {
+                              _goalAlertsEnabled = value;
+                            });
+                          },
+                        ),
+                        _SettingsSwitchTile(
+                          icon: Icons.auto_awesome_rounded,
+                          title: 'Consigli AI',
+                          subtitle:
+                              'Suggerimenti intelligenti sulle tue abitudini.',
+                          value: _aiTipsEnabled,
+                          onChanged: (value) {
+                            setState(() {
+                              _aiTipsEnabled = value;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    _SettingsSection(
+                      title: 'Apple Watch',
+                      icon: Icons.watch_rounded,
+                      children: [
+                        _SettingsSwitchTile(
+                          icon: Icons.sync_rounded,
+                          title: 'Sincronizzazione Watch',
+                          subtitle:
+                              'Mantieni aggiornati riepilogo, entrate e spese.',
+                          value: _watchSyncEnabled,
+                          onChanged: (value) {
+                            setState(() {
+                              _watchSyncEnabled = value;
+                            });
+                          },
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.refresh_rounded,
+                          title: 'Forza sincronizzazione',
+                          subtitle:
+                              'Aggiorna manualmente i dati mostrati sul Watch.',
+                          onTap: () => _showInfoDialog(
+                            title: 'Sincronizzazione',
+                            description:
+                                'Più avanti collegheremo questo pulsante al servizio di sync del Watch.',
+                            icon: Icons.refresh_rounded,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _SettingsSection(
+                      title: 'Sicurezza',
+                      icon: Icons.lock_rounded,
+                      children: [
+                        _SettingsActionTile(
+                          icon: Icons.password_rounded,
+                          title: 'Cambia password',
+                          subtitle:
+                              'Ricevi un’email per reimpostare la password.',
+                          onTap: _sendPasswordResetEmail,
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.privacy_tip_rounded,
+                          title: 'Privacy dati',
+                          subtitle:
+                              'Scopri come vengono usati i dati finanziari.',
+                          onTap: () => _showInfoDialog(
+                            title: 'Privacy dati',
+                            description:
+                                'PocketPlan deve trattare i dati finanziari con molta attenzione. Qui inseriremo una spiegazione chiara su privacy, sicurezza e utilizzo dei dati.',
+                            icon: Icons.privacy_tip_rounded,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _SettingsSection(
+                      title: 'Gestione dati',
+                      icon: Icons.storage_rounded,
+                      children: [
+                        _SettingsActionTile(
+                          icon: Icons.file_download_rounded,
+                          title: 'Esporta dati',
+                          subtitle:
+                              'Scarica una copia delle tue entrate e spese.',
+                          onTap: () => _showInfoDialog(
+                            title: 'Esporta dati',
+                            description:
+                                'Qui potremo aggiungere un export CSV o PDF con movimenti, obiettivi e riepiloghi.',
+                            icon: Icons.file_download_rounded,
+                          ),
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.delete_forever_rounded,
+                          title: 'Elimina dati',
+                          subtitle:
+                              'Cancella i dati salvati nel tuo account.',
+                          danger: true,
+                          onTap: _showDeleteDataDialog,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                SizedBox(height: isMobile ? 18 : 22),
+                const _AppInfoCard(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color primaryText;
+  final Color headerBackground;
+  final Color headerText;
+  final Color headerMuted;
+  final Color success;
+  final Color danger;
+  final Color dangerSoft;
+  final Color shadow;
+
+  const _SettingsColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.primaryText,
+    required this.headerBackground,
+    required this.headerText,
+    required this.headerMuted,
+    required this.success,
+    required this.danger,
+    required this.dangerSoft,
+    required this.shadow,
+  });
+
+  factory _SettingsColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _SettingsColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        primaryText: Color(0xFF0F172A),
+        headerBackground: Color(0xFF020617),
+        headerText: Colors.white,
+        headerMuted: Color(0xFFCBD5E1),
+        success: Color(0xFF22C55E),
+        danger: Color(0xFFF87171),
+        dangerSoft: Color(0xFF450A0A),
+        shadow: Colors.black,
+      );
+    }
+
+    return const _SettingsColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF7FAFE),
+      cardSofter: Color(0xFFF3F6FB),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      primaryText: Colors.white,
+      headerBackground: Color(0xFF172033),
+      headerText: Colors.white,
+      headerMuted: Color(0xFFD7DEE9),
+      success: Color(0xFF16A34A),
+      danger: Color(0xFFDC2626),
+      dangerSoft: Color(0xFFFEE2E2),
+      shadow: Colors.black,
+    );
+  }
+}
+
+class _DialogIcon extends StatelessWidget {
+  final IconData icon;
+  final _SettingsColors colors;
+  final double size;
+
+  const _DialogIcon({
+    required this.icon,
+    required this.colors,
+    this.size = 48,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: colors.primarySoft,
+        borderRadius: BorderRadius.circular(size <= 42 ? 14 : 16),
+      ),
+      child: Icon(
+        icon,
+        color: colors.primary,
+      ),
+    );
+  }
+}
+
+BoxDecoration _settingsCardDecoration(BuildContext context) {
+  final colors = _SettingsColors.of(context);
+
+  return BoxDecoration(
+    color: colors.card,
+    borderRadius: BorderRadius.circular(26),
+    border: Border.all(
+      color: colors.border,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
+        blurRadius: colors.isDark ? 22 : 16,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+}
+
+class _ThemeOptionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ThemeOptionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Material(
+      color: selected ? colors.primarySoft : colors.cardSoft,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected ? colors.primary : colors.border,
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: selected ? colors.primary : colors.card,
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(
+                    color: selected ? colors.primary : colors.border,
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  color: selected ? colors.primaryText : colors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12.5,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: selected ? colors.primary : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? colors.primary : colors.textMuted,
+                    width: 2,
+                  ),
+                ),
+                child: selected
+                    ? Icon(
+                        Icons.check_rounded,
+                        color: colors.primaryText,
+                        size: 16,
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final IconData? suffixIcon;
+  final bool readOnly;
+  final VoidCallback? onTap;
+  final String? Function(String?)? validator;
+  final TextInputType? keyboardType;
+
+  const _ProfileTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    this.suffixIcon,
+    this.readOnly = false,
+    this.onTap,
+    this.validator,
+    this.keyboardType,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return TextFormField(
+      controller: controller,
+      readOnly: readOnly,
+      onTap: onTap,
+      validator: validator,
+      keyboardType: keyboardType,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w800,
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Icon(
+          icon,
+          color: colors.primary,
+        ),
+        suffixIcon: suffixIcon == null
+            ? null
+            : Icon(
+                suffixIcon,
+                color: colors.textMuted,
+              ),
+        labelStyle: TextStyle(
+          color: colors.textSecondary,
+          fontWeight: FontWeight.w700,
+        ),
+        hintStyle: TextStyle(
+          color: colors.textMuted,
+          fontWeight: FontWeight.w600,
+        ),
+        filled: true,
+        fillColor: colors.cardSoft,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.border,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.primary,
+            width: 1.4,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.danger,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.danger,
+            width: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsHeader extends StatelessWidget {
+  final String displayName;
+  final String email;
+  final String initials;
+  final bool isLoadingProfile;
+
+  const _SettingsHeader({
+    required this.displayName,
+    required this.email,
+    required this.initials,
+    required this.isLoadingProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 22 : 28),
+      decoration: BoxDecoration(
+        color: colors.headerBackground,
+        borderRadius: BorderRadius.circular(isMobile ? 26 : 30),
+        boxShadow: [
+          BoxShadow(
+            color: colors.shadow.withValues(
+              alpha: colors.isDark ? 0.24 : 0.10,
+            ),
+            blurRadius: 24,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: isMobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AccountAvatar(initials: initials, size: 68),
+                const SizedBox(height: 18),
+                _HeaderText(
+                  displayName: displayName,
+                  email: email,
+                  isMobile: true,
+                  isLoadingProfile: isLoadingProfile,
+                ),
+                const SizedBox(height: 18),
+                const _HeaderStatusCard(),
+              ],
+            )
+          : Row(
+              children: [
+                _AccountAvatar(initials: initials, size: 78),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: _HeaderText(
+                    displayName: displayName,
+                    email: email,
+                    isMobile: false,
+                    isLoadingProfile: isLoadingProfile,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const _HeaderStatusCard(),
+              ],
+            ),
+    );
+  }
+}
+
+class _AccountAvatar extends StatelessWidget {
+  final String initials;
+  final double size;
+
+  const _AccountAvatar({
+    required this.initials,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.14),
+        ),
+      ),
+      child: Center(
+        child: Text(
+          initials,
+          style: TextStyle(
+            color: colors.headerText,
+            fontSize: size >= 78 ? 26 : 23,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeaderText extends StatelessWidget {
+  final String displayName;
+  final String email;
+  final bool isMobile;
+  final bool isLoadingProfile;
+
+  const _HeaderText({
+    required this.displayName,
+    required this.email,
+    required this.isMobile,
+    required this.isLoadingProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Impostazioni',
+          style: TextStyle(
+            color: colors.headerText,
+            fontSize: isMobile ? 27 : 32,
+            fontWeight: FontWeight.w900,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (isLoadingProfile)
+          Container(
+            width: isMobile ? 170 : 220,
+            height: 18,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          )
+        else
+          Text(
+            displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colors.headerMuted,
+              fontSize: isMobile ? 16 : 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        const SizedBox(height: 4),
+        Text(
+          email,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: colors.headerMuted.withValues(alpha: 0.82),
+            fontSize: isMobile ? 13 : 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HeaderStatusCard extends StatelessWidget {
+  const _HeaderStatusCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    return Container(
+      width: isMobile ? double.infinity : 290,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Stato account',
+            style: TextStyle(
+              color: colors.headerMuted,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(
+                Icons.verified_rounded,
+                color: colors.success,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Account attivo',
+                  style: TextStyle(
+                    color: colors.headerText,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Piano Free · Funzioni base attive',
+            style: TextStyle(
+              color: colors.headerMuted,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResponsiveSettingsGrid extends StatelessWidget {
+  final List<Widget> children;
+
+  const _ResponsiveSettingsGrid({
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (_, constraints) {
+        final isMobile = constraints.maxWidth < 850;
+
+        if (isMobile) {
+          return Column(
+            children: children
+                .map(
+                  (child) => Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: child,
+                  ),
+                )
+                .toList(),
+          );
+        }
+
+        return Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: children
+              .map(
+                (child) => SizedBox(
+                  width: (constraints.maxWidth - 16) / 2,
+                  child: child,
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _SettingsSection extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final List<Widget> children;
+
+  const _SettingsSection({
+    required this.title,
+    required this.icon,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    final visibleChildren = children
+        .map(
+          (child) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: child,
+          ),
+        )
+        .toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: _settingsCardDecoration(context),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: colors.primarySoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  icon,
+                  color: colors.primary,
+                  size: 23,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...visibleChildren,
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsActionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+  final bool danger;
+  final VoidCallback onTap;
+
+  const _SettingsActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.trailing,
+    this.danger = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    final iconColor = danger ? colors.danger : colors.primary;
+    final iconBg = danger ? colors.dangerSoft : colors.primarySoft;
+    final titleColor = danger ? colors.danger : colors.textPrimary;
+
+    return Material(
+      color: colors.cardSoft,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: colors.border,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  icon,
+                  color: iconColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _TileText(
+                  title: title,
+                  subtitle: subtitle,
+                  titleColor: titleColor,
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (trailing != null) trailing!,
+              if (trailing == null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: danger ? colors.danger : colors.textMuted,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsSwitchTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _SettingsSwitchTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.cardSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: colors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: value ? colors.primarySoft : colors.cardSofter,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              icon,
+              color: value ? colors.primary : colors.textMuted,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _TileText(
+              title: title,
+              subtitle: subtitle,
+              titleColor: colors.textPrimary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Switch.adaptive(
+            value: value,
+            activeColor: colors.primary,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TileText extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Color titleColor;
+
+  const _TileText({
+    required this.title,
+    required this.subtitle,
+    required this.titleColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: FontWeight.w900,
+            fontSize: 14.5,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontWeight: FontWeight.w600,
+            fontSize: 12.5,
+            height: 1.25,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlanBadge extends StatelessWidget {
+  final String text;
+
+  const _PlanBadge({
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 7,
+      ),
+      decoration: BoxDecoration(
+        color: colors.primarySoft,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.isDark ? colors.border : Colors.transparent,
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: colors.primary,
+          fontWeight: FontWeight.w900,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+class _AppInfoCard extends StatelessWidget {
+  const _AppInfoCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < 700;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 18 : 22),
+      decoration: _settingsCardDecoration(context),
+      child: isMobile
+          ? const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AppInfoTitle(),
+                SizedBox(height: 14),
+                _AppInfoBadges(),
+              ],
+            )
+          : const Row(
+              children: [
+                Expanded(
+                  child: _AppInfoTitle(),
+                ),
+                SizedBox(width: 18),
+                _AppInfoBadges(),
+              ],
+            ),
+    );
+  }
+}
+
+class _AppInfoTitle extends StatelessWidget {
+  const _AppInfoTitle();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PocketPlan',
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Gestisci i tuoi soldi con un’intelligenza che pensa ai tuoi obiettivi.',
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontWeight: FontWeight.w600,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AppInfoBadges extends StatelessWidget {
+  const _AppInfoBadges();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _InfoBadge(
+          icon: Icons.verified_rounded,
+          label: 'Versione 1.0.0',
+        ),
+        _InfoBadge(
+          icon: Icons.security_rounded,
+          label: 'Dati protetti',
+        ),
+        _InfoBadge(
+          icon: Icons.cloud_done_rounded,
+          label: 'Cloud Sync',
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _InfoBadge({
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 11,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: colors.cardSofter,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.isDark ? colors.border : Colors.transparent,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 15,
+            color: colors.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -5,6 +5,7 @@ import '../pages/dashboard_page.dart';
 import '../pages/expenses_page.dart';
 import '../pages/goals_page.dart';
 import '../pages/incomes_page.dart';
+import '../pages/settings_page.dart';
 import '../services/auth_service.dart';
 
 class AppShell extends StatefulWidget {
@@ -48,11 +49,7 @@ class _AppShellState extends State<AppShell> {
     const _AppNavItem(
       label: 'Impostazioni',
       icon: Icons.settings_rounded,
-      page: _PlaceholderPage(
-        title: 'Impostazioni',
-        icon: Icons.settings_rounded,
-        description: 'Qui gestiremo profilo, notifiche, email e preferenze.',
-      ),
+      page: SettingsPage(),
     ),
   ];
 
@@ -77,26 +74,28 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _showLogoutDialog() async {
+    final colors = _ShellColors.of(context);
+
     final shouldLogout = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: Colors.white,
+          backgroundColor: colors.card,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          title: const Text(
+          title: Text(
             'Uscire dall’account?',
             style: TextStyle(
-              color: Color(0xFF172033),
+              color: colors.textPrimary,
               fontWeight: FontWeight.w900,
             ),
           ),
-          content: const Text(
+          content: Text(
             'Sei sicuro di voler uscire dal tuo account?',
             style: TextStyle(
-              color: Color(0xFF64748B),
+              color: colors.textSecondary,
               fontWeight: FontWeight.w600,
               height: 1.35,
             ),
@@ -108,9 +107,9 @@ class _AppShellState extends State<AppShell> {
               child: OutlinedButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF172033),
-                  side: const BorderSide(
-                    color: Color(0xFFE5ECF5),
+                  foregroundColor: colors.textPrimary,
+                  side: BorderSide(
+                    color: colors.border,
                   ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
@@ -129,7 +128,7 @@ class _AppShellState extends State<AppShell> {
                 icon: const Icon(Icons.logout_rounded, size: 19),
                 label: const Text('Esci'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFDC2626),
+                  backgroundColor: colors.danger,
                   foregroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
@@ -153,12 +152,13 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
     final isDesktop = _isDesktop(context);
     final selectedItem = _items[_selectedIndex];
     final settingsSelected = _selectedIndex == 5;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: colors.scaffold,
       appBar: isDesktop
           ? null
           : AppBar(
@@ -168,16 +168,26 @@ class _AppShellState extends State<AppShell> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Image.asset(
-                    'assets/images/pocketplan_logo.png',
+                    colors.logoAsset,
                     width: 145,
                     fit: BoxFit.contain,
                     alignment: Alignment.centerLeft,
+                    errorBuilder: (_, __, ___) {
+                      return Text(
+                        'PocketPlan',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
               centerTitle: false,
-              backgroundColor: Colors.white,
-              surfaceTintColor: Colors.white,
+              backgroundColor: colors.card,
+              surfaceTintColor: colors.card,
               elevation: 0,
               actions: [
                 Padding(
@@ -187,8 +197,8 @@ class _AppShellState extends State<AppShell> {
                     children: [
                       Material(
                         color: settingsSelected
-                            ? const Color(0xFFE3F2FD)
-                            : const Color(0xFFF1F5F9),
+                            ? colors.primarySoft
+                            : colors.cardSofter,
                         borderRadius: BorderRadius.circular(14),
                         child: InkWell(
                           onTap: _openSettings,
@@ -199,8 +209,8 @@ class _AppShellState extends State<AppShell> {
                             child: Icon(
                               Icons.settings_rounded,
                               color: settingsSelected
-                                  ? const Color(0xFF1565C0)
-                                  : const Color(0xFF94A3B8),
+                                  ? colors.primary
+                                  : colors.textMuted,
                               size: 22,
                             ),
                           ),
@@ -208,7 +218,7 @@ class _AppShellState extends State<AppShell> {
                       ),
                       const SizedBox(width: 8),
                       Material(
-                        color: const Color(0xFFDC2626),
+                        color: colors.danger,
                         borderRadius: BorderRadius.circular(14),
                         child: InkWell(
                           onTap: _showLogoutDialog,
@@ -262,6 +272,88 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
+class _ShellColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color primaryText;
+  final Color danger;
+  final Color shadow;
+  final String logoAsset;
+
+  const _ShellColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.primaryText,
+    required this.danger,
+    required this.shadow,
+    required this.logoAsset,
+  });
+
+  factory _ShellColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _ShellColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        primaryText: Color(0xFF0F172A),
+        danger: Color(0xFFF87171),
+        shadow: Colors.black,
+
+        // Logo da usare quando il tema è scuro
+        logoAsset: 'assets/images/pocketplan_logo_themes.png',
+      );
+    }
+
+    return const _ShellColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF8FAFC),
+      cardSofter: Color(0xFFF1F5F9),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      primaryText: Colors.white,
+      danger: Color(0xFFDC2626),
+      shadow: Colors.black,
+
+      // Logo da usare quando il tema è chiaro
+      logoAsset: 'assets/images/pocketplan_logo.png',
+    );
+  }
+}
+
 class _AppNavItem {
   final String label;
   final IconData icon;
@@ -289,16 +381,26 @@ class _DesktopSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
+
     return Container(
       width: 280,
       height: double.infinity,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: colors.card,
         border: Border(
           right: BorderSide(
-            color: Color(0xFFE5ECF5),
+            color: colors.border,
           ),
         ),
+        boxShadow: [
+          if (colors.isDark)
+            BoxShadow(
+              color: colors.shadow.withValues(alpha: 0.16),
+              blurRadius: 24,
+              offset: const Offset(8, 0),
+            ),
+        ],
       ),
       child: SafeArea(
         child: Padding(
@@ -341,6 +443,8 @@ class _SidebarLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
+
     return SizedBox(
       width: double.infinity,
       height: 82,
@@ -349,10 +453,23 @@ class _SidebarLogo extends StatelessWidget {
         child: Transform.translate(
           offset: const Offset(-8, 0),
           child: Image.asset(
-            'assets/images/pocketplan_logo.png',
+            colors.logoAsset,
             width: 230,
             fit: BoxFit.contain,
             alignment: Alignment.centerLeft,
+            errorBuilder: (_, __, ___) {
+              return Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  'PocketPlan',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -375,11 +492,10 @@ class _SidebarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor =
-        selected ? const Color(0xFFE3F2FD) : Colors.transparent;
+    final colors = _ShellColors.of(context);
 
-    final foregroundColor =
-        selected ? const Color(0xFF1565C0) : const Color(0xFF475569);
+    final backgroundColor = selected ? colors.primarySoft : Colors.transparent;
+    final foregroundColor = selected ? colors.primary : colors.textSecondary;
 
     return Material(
       color: backgroundColor,
@@ -411,8 +527,8 @@ class _SidebarItem extends StatelessWidget {
                 Container(
                   width: 8,
                   height: 8,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF1E88E5),
+                  decoration: BoxDecoration(
+                    color: colors.primary,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -433,8 +549,10 @@ class _SidebarLogoutButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
+
     return Material(
-      color: const Color(0xFFF8FAFC),
+      color: colors.cardSoft,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onLogout,
@@ -442,17 +560,17 @@ class _SidebarLogoutButton extends StatelessWidget {
         child: Container(
           height: 54,
           padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: const Row(
+          child: Row(
             children: [
               Icon(
                 Icons.logout_rounded,
-                color: Color(0xFFDC2626),
+                color: colors.danger,
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               Text(
                 'Esci',
                 style: TextStyle(
-                  color: Color(0xFFDC2626),
+                  color: colors.danger,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -477,6 +595,7 @@ class _MobileBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     final dashboard = items[0];
@@ -504,15 +623,17 @@ class _MobileBottomNav extends StatelessWidget {
                 bottomPadding > 0 ? bottomPadding : 10,
               ),
               decoration: BoxDecoration(
-                color: Colors.white,
-                border: const Border(
+                color: colors.card,
+                border: Border(
                   top: BorderSide(
-                    color: Color(0xFFE5ECF5),
+                    color: colors.border,
                   ),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
+                    color: colors.shadow.withValues(
+                      alpha: colors.isDark ? 0.22 : 0.08,
+                    ),
                     blurRadius: 24,
                     offset: const Offset(0, -8),
                   ),
@@ -583,7 +704,9 @@ class _MobileNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? const Color(0xFF1565C0) : const Color(0xFF94A3B8);
+    final colors = _ShellColors.of(context);
+
+    final color = selected ? colors.primary : colors.textMuted;
 
     return Material(
       color: Colors.transparent,
@@ -597,7 +720,7 @@ class _MobileNavItem extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 2),
           padding: const EdgeInsets.symmetric(vertical: 6),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE3F2FD) : Colors.transparent,
+            color: selected ? colors.primarySoft : Colors.transparent,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -642,20 +765,18 @@ class _MobileDashboardButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final circleColor =
-        selected ? const Color(0xFF1565C0) : const Color(0xFFE2E8F0);
+    final colors = _ShellColors.of(context);
 
+    final circleColor = selected ? colors.primary : colors.cardSofter;
     final secondCircleColor =
-        selected ? const Color(0xFF1E88E5) : const Color(0xFFF1F5F9);
+        selected ? colors.primary.withValues(alpha: 0.82) : colors.cardSoft;
 
-    final iconColor = selected ? Colors.white : const Color(0xFF94A3B8);
-
-    final textColor =
-        selected ? const Color(0xFF1565C0) : const Color(0xFF94A3B8);
+    final iconColor = selected ? colors.primaryText : colors.textMuted;
+    final textColor = selected ? colors.primary : colors.textMuted;
 
     final shadowColor = selected
-        ? const Color(0xFF1565C0).withValues(alpha: 0.35)
-        : Colors.black.withValues(alpha: 0.08);
+        ? colors.primary.withValues(alpha: colors.isDark ? 0.28 : 0.35)
+        : colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.08);
 
     return SizedBox(
       width: 86,
@@ -691,7 +812,7 @@ class _MobileDashboardButton extends StatelessWidget {
                     ),
                   ],
                   border: Border.all(
-                    color: Colors.white,
+                    color: colors.card,
                     width: 4,
                   ),
                 ),
@@ -715,94 +836,6 @@ class _MobileDashboardButton extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PlaceholderPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final String description;
-
-  const _PlaceholderPage({
-    required this.title,
-    required this.icon,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 680),
-            padding: const EdgeInsets.all(34),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: const Color(0xFFE5ECF5),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 22,
-                  offset: const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 74,
-                  height: 74,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE3F2FD),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Icon(
-                    icon,
-                    color: const Color(0xFF1E88E5),
-                    size: 38,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  description,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 16,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Pagina in preparazione',
-                  style: TextStyle(
-                    color: Color(0xFF1E88E5),
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       ),

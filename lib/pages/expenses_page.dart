@@ -16,6 +16,18 @@ enum ExpenseType {
   planned,
 }
 
+class _ExpenseBankAccountItem {
+  final String id;
+  final String name;
+  final double balance;
+
+  const _ExpenseBankAccountItem({
+    required this.id,
+    required this.name,
+    required this.balance,
+  });
+}
+
 class ExpensesPage extends StatefulWidget {
   const ExpensesPage({super.key});
 
@@ -62,6 +74,22 @@ class _ExpensesPageState extends State<ExpensesPage> {
     }
 
     return [];
+  }
+
+  List<_ExpenseBankAccountItem> _bankAccountsFromSnapshot(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+  ) {
+    if (snapshot == null) return [];
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return _ExpenseBankAccountItem(
+        id: doc.id,
+        name: (data['name'] ?? 'Conto').toString(),
+        balance: _amountFrom(data['balance']),
+      );
+    }).toList();
   }
 
   double _spentFromSplitItems(List<Map<String, dynamic>> items) {
@@ -306,12 +334,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
 
   Future<void> _showExpenseDialog({
     QueryDocumentSnapshot<Map<String, dynamic>>? doc,
+    required List<_ExpenseBankAccountItem> bankAccounts,
   }) async {
     await _showResponsiveSheet(
       maxDesktopWidth: 520,
       child: _ExpenseFormDialog(
         financeService: _financeService,
         expenseDoc: doc,
+        bankAccounts: bankAccounts,
       ),
     );
   }
@@ -320,6 +350,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     required String expenseId,
     required String title,
     required double remainingAmount,
+    required List<_ExpenseBankAccountItem> bankAccounts,
   }) async {
     await _showResponsiveSheet(
       maxDesktopWidth: 480,
@@ -328,6 +359,25 @@ class _ExpensesPageState extends State<ExpensesPage> {
         remainingAmount: remainingAmount,
         financeService: _financeService,
         expenseId: expenseId,
+        bankAccounts: bankAccounts,
+      ),
+    );
+  }
+
+  Future<void> _showPayExpenseDialog({
+    required String expenseId,
+    required String title,
+    required double amount,
+    required List<_ExpenseBankAccountItem> bankAccounts,
+  }) async {
+    await _showResponsiveSheet(
+      maxDesktopWidth: 460,
+      child: _PayExpenseDialog(
+        financeService: _financeService,
+        expenseId: expenseId,
+        title: title,
+        amount: amount,
+        bankAccounts: bankAccounts,
       ),
     );
   }
@@ -353,6 +403,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     required Widget child,
     double maxDesktopWidth = 480,
   }) async {
+    final colors = _ExpensesColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -371,6 +422,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     await showDialog(
       context: context,
       builder: (_) => Dialog(
+        backgroundColor: colors.card,
         insetPadding: const EdgeInsets.all(24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(28),
@@ -387,27 +439,41 @@ class _ExpensesPageState extends State<ExpensesPage> {
     required String expenseId,
     required String title,
   }) async {
+    final colors = _ExpensesColors.of(context);
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) {
         return AlertDialog(
+          backgroundColor: colors.card,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          title: const Text(
+          title: Text(
             'Eliminare spesa?',
             style: TextStyle(
               fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
+              color: colors.textPrimary,
             ),
           ),
           content: Text(
-            'Vuoi davvero eliminare "$title"? Questa azione non può essere annullata.',
+            'Vuoi davvero eliminare "$title"? Se era già stata pagata da un conto, il saldo verrà ripristinato.',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annulla'),
+              child: Text(
+                'Annulla',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context, true),
@@ -430,193 +496,241 @@ class _ExpensesPageState extends State<ExpensesPage> {
 
   Future<void> _togglePaid({
     required String expenseId,
+    required String title,
+    required double amount,
     required bool currentValue,
+    required List<_ExpenseBankAccountItem> bankAccounts,
   }) async {
-    await _financeService.updateExpensePaid(
+    if (currentValue) {
+      await _financeService.updateExpensePaid(
+        expenseId: expenseId,
+        isPaid: false,
+      );
+
+      return;
+    }
+
+    await _showPayExpenseDialog(
       expenseId: expenseId,
-      isPaid: !currentValue,
+      title: title,
+      amount: amount,
+      bankAccounts: bankAccounts,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: colors.scaffold,
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _financeService.expensesStream(),
         builder: (context, snapshot) {
-          final docs = snapshot.data?.docs ?? [];
-          final monthDocs = _docsBySelectedMonth(docs);
-          final filteredDocs = _filteredDocs(docs);
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _financeService.bankAccountsStream(),
+            builder: (context, bankAccountsSnapshot) {
+              final docs = snapshot.data?.docs ?? [];
+              final bankAccounts = _bankAccountsFromSnapshot(
+                bankAccountsSnapshot.data,
+              );
 
-          final totalAllExpected = _sumAllExpected(monthDocs);
-          final totalUnpaidStandard = _sumUnpaidStandard(monthDocs);
-          final totalPlannedRemaining = _sumPlannedRemaining(monthDocs);
-          final totalPlannedSaved = _sumPlannedSaved(monthDocs);
-          final unpaidCount = _unpaidStandardCount(monthDocs);
+              final monthDocs = _docsBySelectedMonth(docs);
+              final filteredDocs = _filteredDocs(docs);
 
-          final isSelectedMonthClosed = _isPastMonth(_selectedMonth);
+              final totalAllExpected = _sumAllExpected(monthDocs);
+              final totalUnpaidStandard = _sumUnpaidStandard(monthDocs);
+              final totalPlannedRemaining = _sumPlannedRemaining(monthDocs);
+              final totalPlannedSaved = _sumPlannedSaved(monthDocs);
+              final unpaidCount = _unpaidStandardCount(monthDocs);
 
-          final plannedHeaderLabel =
-              isSelectedMonthClosed ? 'Risparmiato' : 'Residuo budget';
+              final isSelectedMonthClosed = _isPastMonth(_selectedMonth);
 
-          final plannedHeaderValue = isSelectedMonthClosed
-              ? totalPlannedSaved
-              : totalPlannedRemaining;
+              final plannedHeaderLabel =
+                  isSelectedMonthClosed ? 'Risparmiato' : 'Residuo budget';
 
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final isMobile = constraints.maxWidth < 700;
+              final plannedHeaderValue = isSelectedMonthClosed
+                  ? totalPlannedSaved
+                  : totalPlannedRemaining;
 
-              return SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.fromLTRB(
-                  isMobile ? 16 : 24,
-                  isMobile ? 16 : 24,
-                  isMobile ? 16 : 24,
-                  isMobile ? 120 : 36,
-                ),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1180),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _ExpensesHeader(
-                          totalAll: _currencyFormatter.format(
-                            totalAllExpected,
-                          ),
-                          totalUnpaid: _currencyFormatter.format(
-                            totalUnpaidStandard,
-                          ),
-                          plannedAmount: _currencyFormatter.format(
-                            plannedHeaderValue,
-                          ),
-                          plannedLabel: plannedHeaderLabel,
-                          unpaidCount: unpaidCount,
-                          onAddExpense: () => _showExpenseDialog(),
-                        ),
-                        SizedBox(height: isMobile ? 14 : 18),
-                        _MonthSelector(
-                          selectedMonth: _selectedMonth,
-                          monthFormatter: _monthFormatter,
-                          onPrevious: _goToPreviousMonth,
-                          onNext: _goToNextMonth,
-                          onCurrentMonth: _goToCurrentMonth,
-                        ),
-                        SizedBox(height: isMobile ? 14 : 18),
-                        _FilterBar(
-                          selectedFilter: _selectedFilter,
-                          onChanged: (filter) {
-                            setState(() {
-                              _selectedFilter = filter;
-                            });
-                          },
-                        ),
-                        SizedBox(height: isMobile ? 18 : 22),
-                        if (snapshot.connectionState == ConnectionState.waiting)
-                          const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(32),
-                              child: CircularProgressIndicator(),
-                            ),
-                          )
-                        else if (filteredDocs.isEmpty)
-                          const _EmptyExpenses()
-                        else
-                          Column(
-                            children: filteredDocs.map((doc) {
-                              final data = doc.data();
+              final isLoading =
+                  snapshot.connectionState == ConnectionState.waiting ||
+                      bankAccountsSnapshot.connectionState ==
+                          ConnectionState.waiting;
 
-                              final title = data['title'] ?? 'Spesa';
-                              final category = data['category'] ?? 'Generale';
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final isMobile = constraints.maxWidth < 700;
 
-                              final amount = _amountFrom(data['amount']);
-                              final isPlanned = _isPlannedExpense(data);
-                              final isPaid = _isStandardPaid(data);
-
-                              final splitItems = _splitItemsFrom(
-                                data['split_items'],
-                              );
-                              final spent = _spentFromSplitItems(splitItems);
-                              final remaining = _remainingBudget(
-                                amount: amount,
-                                spent: spent,
-                              );
-
-                              final reminderEnabled =
-                                  data['reminder_enabled'] == true;
-
-                              final dueDateRaw = data['due_date'];
-                              final dueDate = dueDateRaw is Timestamp
-                                  ? dueDateRaw.toDate()
-                                  : DateTime.now();
-
-                              final monthRaw = data['month'];
-                              final monthDate = monthRaw is Timestamp
-                                  ? monthRaw.toDate()
-                                  : DateTime(
-                                      DateTime.now().year,
-                                      DateTime.now().month,
-                                    );
-
-                              final isBudgetMonthClosed =
-                                  isPlanned && _isPastMonth(monthDate);
-
-                              return _ExpenseCard(
-                                title: title.toString(),
-                                category: category.toString(),
-                                amount: _currencyFormatter.format(amount),
-                                dueDate: _dateFormatter.format(dueDate),
-                                monthLabel: _monthFormatter.format(monthDate),
-                                deadlineLabel: _deadlineLabel(
-                                  dueDate,
-                                  isPaid,
-                                ),
-                                deadlineColor: _deadlineColor(
-                                  dueDate,
-                                  isPaid,
-                                ),
-                                isPaid: isPaid,
-                                isPlanned: isPlanned,
-                                isBudgetMonthClosed: isBudgetMonthClosed,
-                                reminderEnabled: reminderEnabled,
-                                spentAmount: _currencyFormatter.format(spent),
-                                remainingAmount: _currencyFormatter.format(
-                                  remaining,
-                                ),
-                                rawRemainingAmount: remaining,
-                                splitItems: splitItems,
-                                currencyFormatter: _currencyFormatter,
-                                dateFormatter: _dateFormatter,
-                                onTogglePaid: () => _togglePaid(
-                                  expenseId: doc.id,
-                                  currentValue: isPaid,
-                                ),
-                                onEdit: () => _showExpenseDialog(doc: doc),
-                                onDelete: () => _confirmDelete(
-                                  expenseId: doc.id,
-                                  title: title.toString(),
-                                ),
-                                onAddBudgetMovement: () =>
-                                    _showAddBudgetMovementDialog(
-                                  expenseId: doc.id,
-                                  title: title.toString(),
-                                  remainingAmount: remaining,
-                                ),
-                                onDeleteBudgetMovement: (index) =>
-                                    _deleteBudgetMovement(
-                                  expenseId: doc.id,
-                                  currentItems: splitItems,
-                                  index: index,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                      ],
+                  return SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: EdgeInsets.fromLTRB(
+                      isMobile ? 16 : 24,
+                      isMobile ? 16 : 24,
+                      isMobile ? 16 : 24,
+                      isMobile ? 120 : 36,
                     ),
-                  ),
-                ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1180),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _ExpensesHeader(
+                              totalAll: _currencyFormatter.format(
+                                totalAllExpected,
+                              ),
+                              totalUnpaid: _currencyFormatter.format(
+                                totalUnpaidStandard,
+                              ),
+                              plannedAmount: _currencyFormatter.format(
+                                plannedHeaderValue,
+                              ),
+                              plannedLabel: plannedHeaderLabel,
+                              unpaidCount: unpaidCount,
+                              onAddExpense: () => _showExpenseDialog(
+                                bankAccounts: bankAccounts,
+                              ),
+                            ),
+                            SizedBox(height: isMobile ? 14 : 18),
+                            _MonthSelector(
+                              selectedMonth: _selectedMonth,
+                              monthFormatter: _monthFormatter,
+                              onPrevious: _goToPreviousMonth,
+                              onNext: _goToNextMonth,
+                              onCurrentMonth: _goToCurrentMonth,
+                            ),
+                            SizedBox(height: isMobile ? 14 : 18),
+                            _FilterBar(
+                              selectedFilter: _selectedFilter,
+                              onChanged: (filter) {
+                                setState(() {
+                                  _selectedFilter = filter;
+                                });
+                              },
+                            ),
+                            SizedBox(height: isMobile ? 18 : 22),
+                            if (isLoading)
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(32),
+                                  child: CircularProgressIndicator(
+                                    color: colors.primary,
+                                  ),
+                                ),
+                              )
+                            else if (filteredDocs.isEmpty)
+                              const _EmptyExpenses()
+                            else
+                              Column(
+                                children: filteredDocs.map((doc) {
+                                  final data = doc.data();
+
+                                  final title = data['title'] ?? 'Spesa';
+                                  final category =
+                                      data['category'] ?? 'Generale';
+
+                                  final amount = _amountFrom(data['amount']);
+                                  final isPlanned = _isPlannedExpense(data);
+                                  final isPaid = _isStandardPaid(data);
+
+                                  final splitItems = _splitItemsFrom(
+                                    data['split_items'],
+                                  );
+                                  final spent = _spentFromSplitItems(splitItems);
+                                  final remaining = _remainingBudget(
+                                    amount: amount,
+                                    spent: spent,
+                                  );
+
+                                  final reminderEnabled =
+                                      data['reminder_enabled'] == true;
+
+                                  final dueDateRaw = data['due_date'];
+                                  final dueDate = dueDateRaw is Timestamp
+                                      ? dueDateRaw.toDate()
+                                      : DateTime.now();
+
+                                  final monthRaw = data['month'];
+                                  final monthDate = monthRaw is Timestamp
+                                      ? monthRaw.toDate()
+                                      : DateTime(
+                                          DateTime.now().year,
+                                          DateTime.now().month,
+                                        );
+
+                                  final isBudgetMonthClosed =
+                                      isPlanned && _isPastMonth(monthDate);
+
+                                  final bankAccountName =
+                                      data['bankAccountName']?.toString();
+
+                                  return _ExpenseCard(
+                                    title: title.toString(),
+                                    category: category.toString(),
+                                    amount: _currencyFormatter.format(amount),
+                                    dueDate: _dateFormatter.format(dueDate),
+                                    monthLabel:
+                                        _monthFormatter.format(monthDate),
+                                    deadlineLabel: _deadlineLabel(
+                                      dueDate,
+                                      isPaid,
+                                    ),
+                                    deadlineColor: _deadlineColor(
+                                      dueDate,
+                                      isPaid,
+                                    ),
+                                    isPaid: isPaid,
+                                    isPlanned: isPlanned,
+                                    isBudgetMonthClosed: isBudgetMonthClosed,
+                                    reminderEnabled: reminderEnabled,
+                                    bankAccountName: bankAccountName,
+                                    spentAmount:
+                                        _currencyFormatter.format(spent),
+                                    remainingAmount: _currencyFormatter.format(
+                                      remaining,
+                                    ),
+                                    rawRemainingAmount: remaining,
+                                    splitItems: splitItems,
+                                    currencyFormatter: _currencyFormatter,
+                                    dateFormatter: _dateFormatter,
+                                    onTogglePaid: () => _togglePaid(
+                                      expenseId: doc.id,
+                                      title: title.toString(),
+                                      amount: amount,
+                                      currentValue: isPaid,
+                                      bankAccounts: bankAccounts,
+                                    ),
+                                    onEdit: () => _showExpenseDialog(
+                                      doc: doc,
+                                      bankAccounts: bankAccounts,
+                                    ),
+                                    onDelete: () => _confirmDelete(
+                                      expenseId: doc.id,
+                                      title: title.toString(),
+                                    ),
+                                    onAddBudgetMovement: () =>
+                                        _showAddBudgetMovementDialog(
+                                      expenseId: doc.id,
+                                      title: title.toString(),
+                                      remainingAmount: remaining,
+                                      bankAccounts: bankAccounts,
+                                    ),
+                                    onDeleteBudgetMovement: (index) =>
+                                        _deleteBudgetMovement(
+                                      expenseId: doc.id,
+                                      currentItems: splitItems,
+                                      index: index,
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
               );
             },
           );
@@ -624,6 +738,197 @@ class _ExpensesPageState extends State<ExpensesPage> {
       ),
     );
   }
+}
+
+class _ExpensesColors {
+  final bool isDark;
+  final Color scaffold;
+  final Color card;
+  final Color cardSoft;
+  final Color cardSofter;
+  final Color border;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color primary;
+  final Color primarySoft;
+  final Color headerBackground;
+  final Color headerText;
+  final Color headerMuted;
+  final Color shadow;
+
+  const _ExpensesColors({
+    required this.isDark,
+    required this.scaffold,
+    required this.card,
+    required this.cardSoft,
+    required this.cardSofter,
+    required this.border,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.primary,
+    required this.primarySoft,
+    required this.headerBackground,
+    required this.headerText,
+    required this.headerMuted,
+    required this.shadow,
+  });
+
+  factory _ExpensesColors.of(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (isDark) {
+      return const _ExpensesColors(
+        isDark: true,
+        scaffold: Color(0xFF0F172A),
+        card: Color(0xFF172033),
+        cardSoft: Color(0xFF111827),
+        cardSofter: Color(0xFF1E293B),
+        border: Color(0xFF334155),
+        textPrimary: Color(0xFFF8FAFC),
+        textSecondary: Color(0xFFCBD5E1),
+        textMuted: Color(0xFF94A3B8),
+        primary: Color(0xFF60A5FA),
+        primarySoft: Color(0xFF1E3A5F),
+        headerBackground: Color(0xFF020617),
+        headerText: Colors.white,
+        headerMuted: Color(0xFFCBD5E1),
+        shadow: Colors.black,
+      );
+    }
+
+    return const _ExpensesColors(
+      isDark: false,
+      scaffold: Color(0xFFF5F8FC),
+      card: Colors.white,
+      cardSoft: Color(0xFFF7FAFE),
+      cardSofter: Color(0xFFF3F6FB),
+      border: Color(0xFFE5ECF5),
+      textPrimary: Color(0xFF172033),
+      textSecondary: Color(0xFF64748B),
+      textMuted: Color(0xFF94A3B8),
+      primary: Color(0xFF1677F2),
+      primarySoft: Color(0xFFE3F2FD),
+      headerBackground: Color(0xFF172033),
+      headerText: Colors.white,
+      headerMuted: Color(0xFFD7DEE9),
+      shadow: Colors.black,
+    );
+  }
+}
+
+BoxDecoration _expensesCardDecoration(BuildContext context) {
+  final colors = _ExpensesColors.of(context);
+
+  return BoxDecoration(
+    color: colors.card,
+    borderRadius: BorderRadius.circular(26),
+    border: Border.all(
+      color: colors.border,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
+        blurRadius: colors.isDark ? 22 : 16,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+}
+
+InputDecoration _expensesInputDecoration({
+  required BuildContext context,
+  required String label,
+  IconData? suffixIcon,
+}) {
+  final colors = _ExpensesColors.of(context);
+
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(
+      color: colors.textSecondary,
+      fontWeight: FontWeight.w700,
+    ),
+    suffixIcon: suffixIcon == null
+        ? null
+        : Icon(
+            suffixIcon,
+            color: colors.textSecondary,
+          ),
+    filled: true,
+    fillColor: colors.cardSoft,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.border,
+      ),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: colors.primary,
+        width: 1.5,
+      ),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+      ),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: const BorderSide(
+        color: Color(0xFFDC2626),
+        width: 1.5,
+      ),
+    ),
+  );
+}
+
+Future<DateTime?> _showExpensesDatePicker({
+  required BuildContext context,
+  required DateTime initialDate,
+  required DateTime firstDate,
+  required DateTime lastDate,
+  String? helpText,
+}) async {
+  final colors = _ExpensesColors.of(context);
+
+  return showDatePicker(
+    context: context,
+    initialDate: initialDate,
+    firstDate: firstDate,
+    lastDate: lastDate,
+    helpText: helpText,
+    builder: (context, child) {
+      return Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: colors.isDark
+              ? const ColorScheme.dark(
+                  primary: Color(0xFF60A5FA),
+                  onPrimary: Color(0xFF0F172A),
+                  surface: Color(0xFF172033),
+                  onSurface: Color(0xFFF8FAFC),
+                )
+              : const ColorScheme.light(
+                  primary: Color(0xFF1677F2),
+                  onPrimary: Colors.white,
+                  surface: Colors.white,
+                  onSurface: Color(0xFF172033),
+                ),
+        ),
+        child: child!,
+      );
+    },
+  );
 }
 
 class _ExpensesHeader extends StatelessWidget {
@@ -645,6 +950,7 @@ class _ExpensesHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -652,11 +958,11 @@ class _ExpensesHeader extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 22 : 28),
       decoration: BoxDecoration(
-        color: const Color(0xFF172033),
+        color: colors.headerBackground,
         borderRadius: BorderRadius.circular(isMobile ? 26 : 30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.10),
+            color: colors.shadow.withValues(alpha: colors.isDark ? 0.24 : 0.10),
             blurRadius: 24,
             offset: const Offset(0, 14),
           ),
@@ -685,8 +991,11 @@ class _ExpensesHeader extends StatelessWidget {
                     icon: const Icon(Icons.add_rounded),
                     label: const Text('Nuova spesa'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF172033),
+                      backgroundColor:
+                          colors.isDark ? colors.primary : Colors.white,
+                      foregroundColor: colors.isDark
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFF172033),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
@@ -725,8 +1034,11 @@ class _ExpensesHeader extends StatelessWidget {
                         icon: const Icon(Icons.add_rounded),
                         label: const Text('Nuova spesa'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF172033),
+                          backgroundColor:
+                              colors.isDark ? colors.primary : Colors.white,
+                          foregroundColor: colors.isDark
+                              ? const Color(0xFF0F172A)
+                              : const Color(0xFF172033),
                           elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
@@ -754,13 +1066,15 @@ class _ExpensesHeaderText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Gestione spese',
           style: TextStyle(
-            color: Colors.white,
+            color: colors.headerText,
             fontSize: isMobile ? 27 : 32,
             fontWeight: FontWeight.w900,
             height: 1.1,
@@ -768,9 +1082,9 @@ class _ExpensesHeaderText extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'Gestisci scadenze, rate mensili e budget che consumi poco alla volta.',
+          'Gestisci scadenze, rate mensili, budget e scegli da quale conto pagare.',
           style: TextStyle(
-            color: const Color(0xFFD7DEE9),
+            color: colors.headerMuted,
             fontSize: isMobile ? 15 : 16,
             height: 1.45,
           ),
@@ -860,6 +1174,7 @@ class _HeaderMiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -880,8 +1195,8 @@ class _HeaderMiniStat extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFFD7DEE9),
+            style: TextStyle(
+              color: colors.headerMuted,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -892,7 +1207,7 @@ class _HeaderMiniStat extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: Colors.white,
+              color: colors.headerText,
               fontSize: isMobile ? 18 : 19,
               fontWeight: FontWeight.w900,
             ),
@@ -926,6 +1241,7 @@ class _MonthSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
@@ -934,19 +1250,8 @@ class _MonthSelector extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      decoration: _expensesCardDecoration(context).copyWith(
         borderRadius: BorderRadius.circular(isMobile ? 24 : 26),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: isMobile
           ? Column(
@@ -961,8 +1266,8 @@ class _MonthSelector extends StatelessWidget {
                       child: Text(
                         label.toUpperCase(),
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFF172033),
+                        style: TextStyle(
+                          color: colors.textPrimary,
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
                         ),
@@ -983,10 +1288,10 @@ class _MonthSelector extends StatelessWidget {
                     icon: const Icon(Icons.today_rounded),
                     label: const Text('Torna al mese attuale'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF1677F2),
-                      disabledForegroundColor: const Color(0xFF94A3B8),
-                      side: const BorderSide(
-                        color: Color(0xFFE5ECF5),
+                      foregroundColor: colors.primary,
+                      disabledForegroundColor: colors.textMuted,
+                      side: BorderSide(
+                        color: colors.border,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -1010,8 +1315,8 @@ class _MonthSelector extends StatelessWidget {
                   child: Text(
                     label.toUpperCase(),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Color(0xFF172033),
+                    style: TextStyle(
+                      color: colors.textPrimary,
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
                     ),
@@ -1030,10 +1335,10 @@ class _MonthSelector extends StatelessWidget {
                     icon: const Icon(Icons.today_rounded),
                     label: const Text('Mese attuale'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF1677F2),
-                      disabledForegroundColor: const Color(0xFF94A3B8),
-                      side: const BorderSide(
-                        color: Color(0xFFE5ECF5),
+                      foregroundColor: colors.primary,
+                      disabledForegroundColor: colors.textMuted,
+                      side: BorderSide(
+                        color: colors.border,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -1061,8 +1366,10 @@ class _MonthArrowButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Material(
-      color: const Color(0xFFE3F2FD),
+      color: colors.primarySoft,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1072,7 +1379,7 @@ class _MonthArrowButton extends StatelessWidget {
           height: 44,
           child: Icon(
             icon,
-            color: const Color(0xFF1565C0),
+            color: colors.primary,
             size: 28,
           ),
         ),
@@ -1092,21 +1399,18 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      decoration: _expensesCardDecoration(context).copyWith(
         borderRadius: BorderRadius.circular(isMobile ? 24 : 999),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
+            color: colors.shadow.withValues(alpha: colors.isDark ? 0.18 : 0.035),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -1203,11 +1507,13 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       height: 42,
       decoration: BoxDecoration(
-        color: selected ? const Color(0xFFE3F2FD) : Colors.transparent,
+        color: selected ? colors.primarySoft : Colors.transparent,
         borderRadius: BorderRadius.circular(999),
       ),
       child: InkWell(
@@ -1219,8 +1525,7 @@ class _FilterChipButton extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color:
-                  selected ? const Color(0xFF1565C0) : const Color(0xFF4B5563),
+              color: selected ? colors.primary : colors.textSecondary,
               fontWeight: FontWeight.w900,
               fontSize: 13,
             ),
@@ -1243,6 +1548,7 @@ class _ExpenseCard extends StatelessWidget {
   final bool isPlanned;
   final bool isBudgetMonthClosed;
   final bool reminderEnabled;
+  final String? bankAccountName;
   final String spentAmount;
   final String remainingAmount;
   final double rawRemainingAmount;
@@ -1267,6 +1573,7 @@ class _ExpenseCard extends StatelessWidget {
     required this.isPlanned,
     required this.isBudgetMonthClosed,
     required this.reminderEnabled,
+    required this.bankAccountName,
     required this.spentAmount,
     required this.remainingAmount,
     required this.rawRemainingAmount,
@@ -1289,36 +1596,27 @@ class _ExpenseCard extends StatelessWidget {
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 14),
       padding: EdgeInsets.all(isMobile ? 16 : 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      decoration: _expensesCardDecoration(context).copyWith(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
-      child: isMobile ? _mobileLayout() : _desktopLayout(),
+      child: isMobile ? _mobileLayout(context) : _desktopLayout(context),
     );
   }
 
-  Widget _mobileLayout() {
+  Widget _mobileLayout(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _topMobile(),
+        _topMobile(context),
         const SizedBox(height: 14),
         if (isPlanned) ...[
-          _plannedInfo(),
+          _plannedInfo(context),
           const SizedBox(height: 14),
-          _budgetProgress(),
+          _budgetProgress(context),
           const SizedBox(height: 14),
-          _budgetMovements(),
+          _budgetMovements(context),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
@@ -1328,8 +1626,9 @@ class _ExpenseCard extends StatelessWidget {
               icon: const Icon(Icons.add_card_rounded),
               label: const Text('Aggiungi uscita'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1677F2),
-                foregroundColor: Colors.white,
+                backgroundColor: colors.primary,
+                foregroundColor:
+                    colors.isDark ? const Color(0xFF0F172A) : Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
@@ -1341,7 +1640,7 @@ class _ExpenseCard extends StatelessWidget {
             ),
           ),
         ] else ...[
-          _standardInfo(),
+          _standardInfo(context),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
@@ -1356,11 +1655,9 @@ class _ExpenseCard extends StatelessWidget {
               ),
               style: OutlinedButton.styleFrom(
                 foregroundColor:
-                    isPaid ? const Color(0xFF172033) : const Color(0xFF16A34A),
+                    isPaid ? colors.textPrimary : const Color(0xFF16A34A),
                 side: BorderSide(
-                  color: isPaid
-                      ? const Color(0xFFE5ECF5)
-                      : const Color(0xFF16A34A),
+                  color: isPaid ? colors.border : const Color(0xFF16A34A),
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
@@ -1376,7 +1673,7 @@ class _ExpenseCard extends StatelessWidget {
     );
   }
 
-  Widget _desktopLayout() {
+  Widget _desktopLayout(BuildContext context) {
     return Column(
       children: [
         Row(
@@ -1388,24 +1685,26 @@ class _ExpenseCard extends StatelessWidget {
             const SizedBox(width: 16),
             Expanded(
               child: isPlanned
-                  ? _plannedDesktopContent()
-                  : _standardDesktopContent(),
+                  ? _plannedDesktopContent(context)
+                  : _standardDesktopContent(context),
             ),
             const SizedBox(width: 14),
-            _actionsDesktop(),
+            _actionsDesktop(context),
           ],
         ),
         if (isPlanned) ...[
           const SizedBox(height: 16),
-          _budgetProgress(),
+          _budgetProgress(context),
           const SizedBox(height: 12),
-          _budgetMovements(),
+          _budgetMovements(context),
         ],
       ],
     );
   }
 
-  Widget _topMobile() {
+  Widget _topMobile(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Row(
       children: [
         _ExpenseIcon(
@@ -1421,37 +1720,49 @@ class _ExpenseCard extends StatelessWidget {
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 isPlanned ? 'Budget: $amount' : amount,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E88E5),
+                  color: colors.primary,
                 ),
               ),
             ],
           ),
         ),
         PopupMenuButton<String>(
+          color: colors.card,
+          iconColor: colors.textSecondary,
           onSelected: (value) {
             if (value == 'edit') onEdit();
             if (value == 'delete') onDelete();
           },
-          itemBuilder: (context) => const [
+          itemBuilder: (context) => [
             PopupMenuItem(
               value: 'edit',
-              child: Text('Modifica'),
+              child: Text(
+                'Modifica',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: 'delete',
-              child: Text('Elimina'),
+              child: Text(
+                'Elimina',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                ),
+              ),
             ),
           ],
           icon: const Icon(Icons.more_vert_rounded),
@@ -1460,7 +1771,9 @@ class _ExpenseCard extends StatelessWidget {
     );
   }
 
-  Widget _standardDesktopContent() {
+  Widget _standardDesktopContent(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Wrap(
       runSpacing: 8,
       children: [
@@ -1469,29 +1782,31 @@ class _ExpenseCard extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                 ),
               ),
             ),
             Text(
               amount,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF172033),
+                color: colors.textPrimary,
               ),
             ),
           ],
         ),
-        _standardInfo(),
+        _standardInfo(context),
       ],
     );
   }
 
-  Widget _plannedDesktopContent() {
+  Widget _plannedDesktopContent(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1500,30 +1815,30 @@ class _ExpenseCard extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF172033),
+                  color: colors.textPrimary,
                 ),
               ),
             ),
             Text(
               'Budget: $amount',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF172033),
+                color: colors.textPrimary,
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        _plannedInfo(),
+        _plannedInfo(context),
       ],
     );
   }
 
-  Widget _standardInfo() {
+  Widget _standardInfo(BuildContext context) {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1540,6 +1855,11 @@ class _ExpenseCard extends StatelessWidget {
           text: deadlineLabel,
           color: deadlineColor,
         ),
+        if (isPaid && bankAccountName != null && bankAccountName!.isNotEmpty)
+          _InfoBadge(
+            text: bankAccountName!,
+            icon: Icons.account_balance_rounded,
+          ),
         if (reminderEnabled)
           const _InfoBadge(
             text: 'Promemoria',
@@ -1549,7 +1869,7 @@ class _ExpenseCard extends StatelessWidget {
     );
   }
 
-  Widget _plannedInfo() {
+  Widget _plannedInfo(BuildContext context) {
     final numericTotal = _parseCurrencyText(amount);
     final numericSpent = _parseCurrencyText(spentAmount);
 
@@ -1603,7 +1923,9 @@ class _ExpenseCard extends StatelessWidget {
     );
   }
 
-  Widget _actionsDesktop() {
+  Widget _actionsDesktop(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     if (isPlanned) {
       return Wrap(
         spacing: 8,
@@ -1614,19 +1936,22 @@ class _ExpenseCard extends StatelessWidget {
             icon: const Icon(Icons.add_card_rounded),
             label: const Text('Aggiungi uscita'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1677F2),
-              foregroundColor: Colors.white,
+              backgroundColor: colors.primary,
+              foregroundColor:
+                  colors.isDark ? const Color(0xFF0F172A) : Colors.white,
               elevation: 0,
             ),
           ),
           IconButton(
             tooltip: 'Modifica',
             onPressed: onEdit,
+            color: colors.textSecondary,
             icon: const Icon(Icons.edit_outlined),
           ),
           IconButton(
             tooltip: 'Elimina',
             onPressed: onDelete,
+            color: colors.textSecondary,
             icon: const Icon(Icons.delete_outline_rounded),
           ),
         ],
@@ -1645,22 +1970,32 @@ class _ExpenseCard extends StatelessWidget {
           label: Text(
             isPaid ? 'Da pagare' : 'Pagata',
           ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: colors.textPrimary,
+            side: BorderSide(
+              color: colors.border,
+            ),
+          ),
         ),
         IconButton(
           tooltip: 'Modifica',
           onPressed: onEdit,
+          color: colors.textSecondary,
           icon: const Icon(Icons.edit_outlined),
         ),
         IconButton(
           tooltip: 'Elimina',
           onPressed: onDelete,
+          color: colors.textSecondary,
           icon: const Icon(Icons.delete_outline_rounded),
         ),
       ],
     );
   }
 
-  Widget _budgetProgress() {
+  Widget _budgetProgress(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     final totalText = amount;
     final spentText = spentAmount;
     final remainingText = remainingAmount;
@@ -1693,7 +2028,7 @@ class _ExpenseCard extends StatelessWidget {
       }
     }
 
-    Color progressColor = const Color(0xFF1677F2);
+    Color progressColor = colors.primary;
 
     if (isOverBudget) {
       progressColor = const Color(0xFFDC2626);
@@ -1705,10 +2040,10 @@ class _ExpenseCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1741,7 +2076,7 @@ class _ExpenseCard extends StatelessWidget {
             child: LinearProgressIndicator(
               minHeight: 10,
               value: progress,
-              backgroundColor: const Color(0xFFE5ECF5),
+              backgroundColor: colors.border,
               color: progressColor,
             ),
           ),
@@ -1770,30 +2105,38 @@ class _ExpenseCard extends StatelessWidget {
     return double.tryParse(cleaned) ?? 0;
   }
 
-  Widget _budgetMovements() {
+  Widget _budgetMovements(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     if (splitItems.isEmpty) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFFBEB),
+          color: colors.isDark
+              ? const Color(0xFF451A03)
+              : const Color(0xFFFFFBEB),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: const Color(0xFFFDE68A),
+            color: colors.isDark
+                ? const Color(0xFF92400E)
+                : const Color(0xFFFDE68A),
           ),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            Icon(
+            const Icon(
               Icons.info_outline_rounded,
               color: Color(0xFFF59E0B),
             ),
-            SizedBox(width: 10),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 'Ancora nessuna uscita registrata per questo budget.',
                 style: TextStyle(
-                  color: Color(0xFF92400E),
+                  color: colors.isDark
+                      ? const Color(0xFFFDE68A)
+                      : const Color(0xFF92400E),
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1806,10 +2149,10 @@ class _ExpenseCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Column(
@@ -1819,12 +2162,17 @@ class _ExpenseCard extends StatelessWidget {
           final itemTitle = item['title']?.toString().trim();
           final amountValue = item['amount'];
           final paidAtRaw = item['paid_at'];
+          final accountName = item['bankAccountName']?.toString();
 
           final paidAt = paidAtRaw is Timestamp
               ? paidAtRaw.toDate()
               : paidAtRaw is DateTime
                   ? paidAtRaw
                   : DateTime.now();
+
+          final subtitle = accountName == null || accountName.isEmpty
+              ? dateFormatter.format(paidAt)
+              : '${dateFormatter.format(paidAt)} • $accountName';
 
           return Column(
             children: [
@@ -1838,28 +2186,28 @@ class _ExpenseCard extends StatelessWidget {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE3F2FD),
+                    color: colors.primarySoft,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.payments_rounded,
                     size: 20,
-                    color: Color(0xFF1677F2),
+                    color: colors.primary,
                   ),
                 ),
                 title: Text(
                   itemTitle == null || itemTitle.isEmpty
                       ? 'Uscita budget'
                       : itemTitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
+                    color: colors.textPrimary,
                   ),
                 ),
                 subtitle: Text(
-                  dateFormatter.format(paidAt),
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
+                  subtitle,
+                  style: TextStyle(
+                    color: colors.textSecondary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -1868,9 +2216,9 @@ class _ExpenseCard extends StatelessWidget {
                   children: [
                     Text(
                       currencyFormatter.format(_readMovementAmount(amountValue)),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF172033),
+                        color: colors.textPrimary,
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -1886,9 +2234,9 @@ class _ExpenseCard extends StatelessWidget {
                 ),
               ),
               if (index != splitItems.length - 1)
-                const Divider(
+                Divider(
                   height: 1,
-                  color: Color(0xFFE5ECF5),
+                  color: colors.border,
                 ),
             ],
           );
@@ -1917,14 +2265,16 @@ class _BudgetMiniValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Column(
       children: [
         Text(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
+          style: TextStyle(
+            color: colors.textSecondary,
             fontWeight: FontWeight.w700,
             fontSize: 12,
           ),
@@ -1934,8 +2284,8 @@ class _BudgetMiniValue extends StatelessWidget {
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF172033),
+          style: TextStyle(
+            color: colors.textPrimary,
             fontWeight: FontWeight.w900,
             fontSize: 14,
           ),
@@ -1958,13 +2308,23 @@ class _ClosedBudgetMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     final bgColor = isOverBudget
-        ? const Color(0xFFFEE2E2)
-        : const Color(0xFFEAF8EF);
+        ? colors.isDark
+            ? const Color(0xFF450A0A)
+            : const Color(0xFFFEE2E2)
+        : colors.isDark
+            ? const Color(0xFF052E16)
+            : const Color(0xFFEAF8EF);
 
     final textColor = isOverBudget
-        ? const Color(0xFF991B1B)
-        : const Color(0xFF166534);
+        ? colors.isDark
+            ? const Color(0xFFFCA5A5)
+            : const Color(0xFF991B1B)
+        : colors.isDark
+            ? const Color(0xFF86EFAC)
+            : const Color(0xFF166534);
 
     final icon = isOverBudget
         ? Icons.warning_amber_rounded
@@ -2016,17 +2376,23 @@ class _ExpenseIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     final bgColor = isPlanned
-        ? const Color(0xFFF3E8FF)
+        ? colors.isDark
+            ? const Color(0xFF2E1065)
+            : const Color(0xFFF3E8FF)
         : isPaid
-            ? const Color(0xFFEAF8EF)
-            : const Color(0xFFE3F2FD);
+            ? colors.isDark
+                ? const Color(0xFF052E16)
+                : const Color(0xFFEAF8EF)
+            : colors.primarySoft;
 
     final iconColor = isPlanned
-        ? const Color(0xFF7C3AED)
+        ? const Color(0xFF8B5CF6)
         : isPaid
             ? const Color(0xFF16A34A)
-            : const Color(0xFF1E88E5);
+            : colors.primary;
 
     final icon = isPlanned
         ? Icons.account_balance_wallet_rounded
@@ -2060,14 +2426,19 @@ class _InfoBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F6FB),
+        color: colors.cardSofter,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.isDark ? colors.border : Colors.transparent,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2075,13 +2446,13 @@ class _InfoBadge extends StatelessWidget {
           Icon(
             icon,
             size: 15,
-            color: const Color(0xFF64748B),
+            color: colors.textSecondary,
           ),
           const SizedBox(width: 5),
           Text(
             text,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: colors.textSecondary,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -2103,13 +2474,15 @@ class _ColoredBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 10,
         vertical: 7,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withValues(alpha: colors.isDark ? 0.18 : 0.1),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -2129,38 +2502,34 @@ class _EmptyExpenses extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(34),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(
-          color: const Color(0xFFE5ECF5),
-        ),
-      ),
-      child: const Column(
+      decoration: _expensesCardDecoration(context),
+      child: Column(
         children: [
           Icon(
             Icons.receipt_long_rounded,
             size: 44,
-            color: Color(0xFF94A3B8),
+            color: colors.textMuted,
           ),
-          SizedBox(height: 14),
+          const SizedBox(height: 14),
           Text(
             'Nessuna spesa trovata',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
+              color: colors.textPrimary,
             ),
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Text(
             'Aggiungi una nuova spesa oppure cambia filtro.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Color(0xFF64748B),
+              color: colors.textSecondary,
             ),
           ),
         ],
@@ -2172,9 +2541,11 @@ class _EmptyExpenses extends StatelessWidget {
 class _ExpenseFormDialog extends StatefulWidget {
   final FinanceService financeService;
   final QueryDocumentSnapshot<Map<String, dynamic>>? expenseDoc;
+  final List<_ExpenseBankAccountItem> bankAccounts;
 
   const _ExpenseFormDialog({
     required this.financeService,
+    required this.bankAccounts,
     this.expenseDoc,
   });
 
@@ -2198,6 +2569,8 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   late bool _repeatMonthly;
 
   late ExpenseType _expenseType;
+
+  String? _selectedBankAccountId;
 
   bool _loading = false;
 
@@ -2259,6 +2632,16 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     _reminderEnabled = _isEditMode ? (data?['reminder_enabled'] == true) : true;
 
     _repeatMonthly = _isEditMode ? (data?['repeat_monthly'] == true) : false;
+
+    _selectedBankAccountId = data?['bankAccountId']?.toString();
+
+    final selectedExists = widget.bankAccounts.any(
+      (account) => account.id == _selectedBankAccountId,
+    );
+
+    if (!selectedExists) {
+      _selectedBankAccountId = null;
+    }
   }
 
   @override
@@ -2267,6 +2650,18 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     _amountController.dispose();
     _categoryController.dispose();
     super.dispose();
+  }
+
+  String? _selectedBankAccountName() {
+    if (_selectedBankAccountId == null) return null;
+
+    for (final account in widget.bankAccounts) {
+      if (account.id == _selectedBankAccountId) {
+        return account.name;
+      }
+    }
+
+    return null;
   }
 
   int _daysInMonth(int year, int month) {
@@ -2312,7 +2707,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   }
 
   Future<void> _pickDueDate() async {
-    final picked = await showDatePicker(
+    final picked = await _showExpensesDatePicker(
       context: context,
       initialDate: _selectedDueDate,
       firstDate: DateTime(2020),
@@ -2335,7 +2730,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   }
 
   Future<void> _pickRepeatUntilDate() async {
-    final picked = await showDatePicker(
+    final picked = await _showExpensesDatePicker(
       context: context,
       initialDate: _repeatUntilDate.isBefore(_selectedDueDate)
           ? _selectedDueDate
@@ -2353,7 +2748,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   }
 
   Future<void> _pickMonth() async {
-    final picked = await showDatePicker(
+    final picked = await _showExpensesDatePicker(
       context: context,
       initialDate: _selectedMonth,
       firstDate: DateTime(2020),
@@ -2369,13 +2764,16 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   }
 
   void _showError(String message) {
+    final colors = _ExpensesColors.of(context);
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: const Color(0xFFDC2626),
         behavior: SnackBarBehavior.floating,
         content: Text(
           message,
-          style: const TextStyle(
+          style: TextStyle(
+            color: colors.isDark ? const Color(0xFF0F172A) : Colors.white,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -2386,8 +2784,12 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (!_isPlanned && _repeatMonthly && _repeatUntilDate.isBefore(_selectedDueDate)) {
-      _showError('La data di fine rata deve essere successiva alla prima scadenza.');
+    if (!_isPlanned &&
+        _repeatMonthly &&
+        _repeatUntilDate.isBefore(_selectedDueDate)) {
+      _showError(
+        'La data di fine rata deve essere successiva alla prima scadenza.',
+      );
       return;
     }
 
@@ -2411,6 +2813,10 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
           reminderEnabled: _isPlanned ? false : _reminderEnabled,
           type: typeValue,
           month: _isPlanned ? _selectedMonth : null,
+          bankAccountId:
+              !_isPlanned && _isPaid ? _selectedBankAccountId : null,
+          bankAccountName:
+              !_isPlanned && _isPaid ? _selectedBankAccountName() : null,
         );
       } else {
         if (!_isPlanned && _repeatMonthly) {
@@ -2441,6 +2847,10 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
             reminderEnabled: _isPlanned ? false : _reminderEnabled,
             type: typeValue,
             month: _isPlanned ? _selectedMonth : null,
+            bankAccountId:
+                !_isPlanned && _isPaid ? _selectedBankAccountId : null,
+            bankAccountName:
+                !_isPlanned && _isPaid ? _selectedBankAccountName() : null,
           );
         }
       }
@@ -2484,6 +2894,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
                     _isPaid = false;
                     _reminderEnabled = false;
                     _repeatMonthly = false;
+                    _selectedBankAccountId = null;
                   }
                 });
               },
@@ -2537,9 +2948,25 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
                     : (value) {
                         setState(() {
                           _isPaid = value;
+
+                          if (!value) {
+                            _selectedBankAccountId = null;
+                          }
                         });
                       },
               ),
+              if (_isPaid) ...[
+                const SizedBox(height: 10),
+                _ExpenseBankAccountDropdown(
+                  bankAccounts: widget.bankAccounts,
+                  selectedBankAccountId: _selectedBankAccountId,
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedBankAccountId = value;
+                    });
+                  },
+                ),
+              ],
               const SizedBox(height: 8),
               _SwitchTile(
                 title: 'Promemoria attivo',
@@ -2562,6 +2989,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
 
                           if (value) {
                             _isPaid = false;
+                            _selectedBankAccountId = null;
 
                             if (_repeatUntilDate.isBefore(_selectedDueDate)) {
                               _repeatUntilDate = DateTime(
@@ -2597,6 +3025,105 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   }
 }
 
+class _PayExpenseDialog extends StatefulWidget {
+  final FinanceService financeService;
+  final String expenseId;
+  final String title;
+  final double amount;
+  final List<_ExpenseBankAccountItem> bankAccounts;
+
+  const _PayExpenseDialog({
+    required this.financeService,
+    required this.expenseId,
+    required this.title,
+    required this.amount,
+    required this.bankAccounts,
+  });
+
+  @override
+  State<_PayExpenseDialog> createState() => _PayExpenseDialogState();
+}
+
+class _PayExpenseDialogState extends State<_PayExpenseDialog> {
+  String? _selectedBankAccountId;
+  bool _loading = false;
+
+  String? _selectedBankAccountName() {
+    if (_selectedBankAccountId == null) return null;
+
+    for (final account in widget.bankAccounts) {
+      if (account.id == _selectedBankAccountId) {
+        return account.name;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _save() async {
+    setState(() => _loading = true);
+
+    await widget.financeService.updateExpensePaid(
+      expenseId: widget.expenseId,
+      isPaid: true,
+      bankAccountId: _selectedBankAccountId,
+      bankAccountName: _selectedBankAccountName(),
+    );
+
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+    final formattedAmount = NumberFormat.currency(
+      locale: 'it_IT',
+      symbol: '€',
+    ).format(widget.amount);
+
+    return _BaseFormSheet(
+      title: 'Segna come pagata',
+      loading: _loading,
+      saveLabel: 'Conferma',
+      onSave: _save,
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: colors.isDark
+                  ? const Color(0xFF052E16)
+                  : const Color(0xFFEAF8EF),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Text(
+              '${widget.title}\nImporto: $formattedAmount',
+              style: TextStyle(
+                color: colors.isDark
+                    ? const Color(0xFF86EFAC)
+                    : const Color(0xFF166534),
+                fontWeight: FontWeight.w900,
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _ExpenseBankAccountDropdown(
+            bankAccounts: widget.bankAccounts,
+            selectedBankAccountId: _selectedBankAccountId,
+            onChanged: (value) {
+              setState(() {
+                _selectedBankAccountId = value;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RecurringInfoBox extends StatelessWidget {
   final int count;
   final DateTime startDate;
@@ -2610,32 +3137,33 @@ class _RecurringInfoBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final formatter = DateFormat('dd/MM/yyyy', 'it_IT');
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFE3F2FD),
+        color: colors.primarySoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFBFDBFE),
+          color: colors.primary.withValues(alpha: 0.35),
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
+          Icon(
             Icons.repeat_rounded,
-            color: Color(0xFF1565C0),
+            color: colors.primary,
             size: 22,
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               'Verranno create $count rate mensili, dalla scadenza ${formatter.format(startDate)} fino al ${formatter.format(endDate)}.',
-              style: const TextStyle(
-                color: Color(0xFF1565C0),
+              style: TextStyle(
+                color: colors.primary,
                 fontWeight: FontWeight.w800,
                 height: 1.35,
               ),
@@ -2658,6 +3186,7 @@ class _ExpenseTypeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final isStandard = selectedType == ExpenseType.standard;
     final isPlanned = selectedType == ExpenseType.planned;
 
@@ -2665,10 +3194,10 @@ class _ExpenseTypeSelector extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: colors.cardSoft,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: Row(
@@ -2711,16 +3240,20 @@ class _TypeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       height: 46,
       decoration: BoxDecoration(
-        color: selected ? Colors.white : Colors.transparent,
+        color: selected ? colors.card : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         boxShadow: selected
             ? [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
+                  color: colors.shadow.withValues(
+                    alpha: colors.isDark ? 0.18 : 0.04,
+                  ),
                   blurRadius: 12,
                   offset: const Offset(0, 6),
                 ),
@@ -2736,8 +3269,7 @@ class _TypeButton extends StatelessWidget {
             Icon(
               icon,
               size: 18,
-              color:
-                  selected ? const Color(0xFF1677F2) : const Color(0xFF64748B),
+              color: selected ? colors.primary : colors.textSecondary,
             ),
             const SizedBox(width: 7),
             Flexible(
@@ -2746,9 +3278,7 @@ class _TypeButton extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: selected
-                      ? const Color(0xFF172033)
-                      : const Color(0xFF64748B),
+                  color: selected ? colors.textPrimary : colors.textSecondary,
                   fontWeight: FontWeight.w900,
                   fontSize: 13,
                 ),
@@ -2766,12 +3296,14 @@ class _BudgetMovementDialog extends StatefulWidget {
   final double remainingAmount;
   final FinanceService financeService;
   final String expenseId;
+  final List<_ExpenseBankAccountItem> bankAccounts;
 
   const _BudgetMovementDialog({
     required this.title,
     required this.remainingAmount,
     required this.financeService,
     required this.expenseId,
+    required this.bankAccounts,
   });
 
   @override
@@ -2785,6 +3317,7 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
   final TextEditingController _amountController = TextEditingController();
 
   DateTime _selectedDate = DateTime.now();
+  String? _selectedBankAccountId;
   bool _loading = false;
 
   @override
@@ -2794,8 +3327,20 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
     super.dispose();
   }
 
+  String? _selectedBankAccountName() {
+    if (_selectedBankAccountId == null) return null;
+
+    for (final account in widget.bankAccounts) {
+      if (account.id == _selectedBankAccountId) {
+        return account.name;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
+    final picked = await _showExpensesDatePicker(
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
@@ -2823,6 +3368,8 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
       title: _titleController.text.trim(),
       amount: amount,
       paidAt: _selectedDate,
+      bankAccountId: _selectedBankAccountId,
+      bankAccountName: _selectedBankAccountName(),
     );
 
     if (mounted) Navigator.pop(context);
@@ -2830,6 +3377,7 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final formattedRemaining = NumberFormat.currency(
       locale: 'it_IT',
       symbol: '€',
@@ -2848,13 +3396,13 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFE3F2FD),
+                color: colors.primarySoft,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Text(
                 '${widget.title}\nResiduo attuale: $formattedRemaining',
-                style: const TextStyle(
-                  color: Color(0xFF1565C0),
+                style: TextStyle(
+                  color: colors.primary,
                   fontWeight: FontWeight.w900,
                   height: 1.4,
                 ),
@@ -2876,6 +3424,16 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
               ),
             ),
             const SizedBox(height: 12),
+            _ExpenseBankAccountDropdown(
+              bankAccounts: widget.bankAccounts,
+              selectedBankAccountId: _selectedBankAccountId,
+              onChanged: (value) {
+                setState(() {
+                  _selectedBankAccountId = value;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
             _DateButton(
               label: 'Data uscita',
               date: _selectedDate,
@@ -2885,6 +3443,64 @@ class _BudgetMovementDialogState extends State<_BudgetMovementDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ExpenseBankAccountDropdown extends StatelessWidget {
+  final List<_ExpenseBankAccountItem> bankAccounts;
+  final String? selectedBankAccountId;
+  final ValueChanged<String?> onChanged;
+
+  const _ExpenseBankAccountDropdown({
+    required this.bankAccounts,
+    required this.selectedBankAccountId,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+    final formatter = NumberFormat.currency(
+      locale: 'it_IT',
+      symbol: '€',
+    );
+
+    return DropdownButtonFormField<String?>(
+      value: selectedBankAccountId,
+      dropdownColor: colors.card,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: _expensesInputDecoration(
+        context: context,
+        label: 'Paga dal conto',
+      ),
+      items: [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(
+            'Non scalare da nessun conto',
+            style: TextStyle(
+              color: colors.textPrimary,
+            ),
+          ),
+        ),
+        ...bankAccounts.map((account) {
+          return DropdownMenuItem<String?>(
+            value: account.id,
+            child: Text(
+              '${account.name} · ${formatter.format(account.balance)}',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.textPrimary,
+              ),
+            ),
+          );
+        }),
+      ],
+      onChanged: onChanged,
     );
   }
 }
@@ -2906,6 +3522,7 @@ class _BaseFormSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
@@ -2923,7 +3540,7 @@ class _BaseFormSheet extends StatelessWidget {
           isMobile ? 20 : 24,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.card,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(isMobile ? 28 : 24),
             bottom: Radius.circular(isMobile ? 0 : 24),
@@ -2941,7 +3558,7 @@ class _BaseFormSheet extends StatelessWidget {
                     width: 42,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD7DEE9),
+                      color: colors.border,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -2952,16 +3569,19 @@ class _BaseFormSheet extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 23,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF172033),
+                          color: colors.textPrimary,
                         ),
                       ),
                     ),
                     IconButton(
                       onPressed: loading ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.close_rounded),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: colors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -2977,9 +3597,9 @@ class _BaseFormSheet extends StatelessWidget {
                           onPressed:
                               loading ? null : () => Navigator.pop(context),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF172033),
-                            side: const BorderSide(
-                              color: Color(0xFFE5ECF5),
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(
+                              color: colors.border,
                             ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -2999,8 +3619,10 @@ class _BaseFormSheet extends StatelessWidget {
                         child: ElevatedButton(
                           onPressed: loading ? null : onSave,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1677F2),
-                            foregroundColor: Colors.white,
+                            backgroundColor: colors.primary,
+                            foregroundColor: colors.isDark
+                                ? const Color(0xFF0F172A)
+                                : Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
@@ -3010,12 +3632,14 @@ class _BaseFormSheet extends StatelessWidget {
                             ),
                           ),
                           child: loading
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: colors.isDark
+                                        ? const Color(0xFF0F172A)
+                                        : Colors.white,
                                   ),
                                 )
                               : Text(saveLabel),
@@ -3048,32 +3672,18 @@ class _TextInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
-      decoration: InputDecoration(
-        labelText: label,
-        filled: true,
-        fillColor: const Color(0xFFF7FAFE),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFFE5ECF5),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(
-            color: Color(0xFF1677F2),
-            width: 1.5,
-          ),
-        ),
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: _expensesInputDecoration(
+        context: context,
+        label: label,
       ),
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
@@ -3082,8 +3692,8 @@ class _TextInput extends StatelessWidget {
 
         final isNumberKeyboard =
             keyboardType == TextInputType.number ||
-                keyboardType ==
-                    const TextInputType.numberWithOptions(decimal: true);
+            keyboardType ==
+                const TextInputType.numberWithOptions(decimal: true);
 
         if (isNumberKeyboard) {
           final parsed = double.tryParse(value.replaceAll(',', '.'));
@@ -3118,35 +3728,23 @@ class _DateButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final formattedDate = DateFormat(displayFormat, 'it_IT').format(date);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: const Color(0xFFF7FAFE),
-          suffixIcon: const Icon(Icons.calendar_month_rounded),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFFE5ECF5),
-            ),
-          ),
+        decoration: _expensesInputDecoration(
+          context: context,
+          label: label,
+          suffixIcon: Icons.calendar_month_rounded,
         ),
         child: Text(
           formattedDate,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF172033),
+            color: colors.textPrimary,
           ),
         ),
       ),
@@ -3167,15 +3765,16 @@ class _SwitchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
     final disabled = onChanged == null;
 
     return Container(
       padding: const EdgeInsets.only(left: 14, right: 8),
       decoration: BoxDecoration(
-        color: disabled ? const Color(0xFFF1F5F9) : const Color(0xFFF7FAFE),
+        color: disabled ? colors.cardSofter : colors.cardSoft,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFFE5ECF5),
+          color: colors.border,
         ),
       ),
       child: SwitchListTile(
@@ -3186,10 +3785,10 @@ class _SwitchTile extends StatelessWidget {
           title,
           style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: disabled ? const Color(0xFF94A3B8) : const Color(0xFF172033),
+            color: disabled ? colors.textMuted : colors.textPrimary,
           ),
         ),
-        activeColor: const Color(0xFF1677F2),
+        activeColor: colors.primary,
       ),
     );
   }

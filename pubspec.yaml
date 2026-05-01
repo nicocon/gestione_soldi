@@ -74,6 +74,7 @@ flutter:
     - assets/images/pocketplan_logo_mini.png
     - assets/images/pocketplan_logo_light.png
     - assets/images/pocketplan_logo_dark.png
+    - assets/images/pocketplan_logo_themes.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
