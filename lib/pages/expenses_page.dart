@@ -81,6 +81,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
     return remaining;
   }
 
+  bool _isPastMonth(DateTime month) {
+    final now = DateTime.now();
+    final currentMonth = DateTime(now.year, now.month);
+    final normalizedMonth = DateTime(month.year, month.month);
+
+    return normalizedMonth.isBefore(currentMonth);
+  }
+
   bool _isStandardPaid(Map<String, dynamic> data) {
     if (_isPlannedExpense(data)) return false;
 
@@ -262,6 +270,30 @@ class _ExpensesPageState extends State<ExpensesPage> {
     });
   }
 
+  double _sumPlannedSaved(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    return docs.fold<double>(0, (sum, doc) {
+      final data = doc.data();
+
+      if (!_isPlannedExpense(data)) return sum;
+
+      final referenceMonth = _expenseReferenceMonth(data);
+
+      if (!_isPastMonth(referenceMonth)) return sum;
+
+      final amount = _amountFrom(data['amount']);
+      final splitItems = _splitItemsFrom(data['split_items']);
+      final spent = _spentFromSplitItems(splitItems);
+
+      final saved = amount - spent;
+
+      if (saved <= 0) return sum;
+
+      return sum + saved;
+    });
+  }
+
   int _unpaidStandardCount(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
@@ -420,7 +452,17 @@ class _ExpensesPageState extends State<ExpensesPage> {
           final totalAllExpected = _sumAllExpected(monthDocs);
           final totalUnpaidStandard = _sumUnpaidStandard(monthDocs);
           final totalPlannedRemaining = _sumPlannedRemaining(monthDocs);
+          final totalPlannedSaved = _sumPlannedSaved(monthDocs);
           final unpaidCount = _unpaidStandardCount(monthDocs);
+
+          final isSelectedMonthClosed = _isPastMonth(_selectedMonth);
+
+          final plannedHeaderLabel =
+              isSelectedMonthClosed ? 'Risparmiato' : 'Residuo budget';
+
+          final plannedHeaderValue = isSelectedMonthClosed
+              ? totalPlannedSaved
+              : totalPlannedRemaining;
 
           return LayoutBuilder(
             builder: (context, constraints) {
@@ -447,9 +489,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
                           totalUnpaid: _currencyFormatter.format(
                             totalUnpaidStandard,
                           ),
-                          plannedRemaining: _currencyFormatter.format(
-                            totalPlannedRemaining,
+                          plannedAmount: _currencyFormatter.format(
+                            plannedHeaderValue,
                           ),
+                          plannedLabel: plannedHeaderLabel,
                           unpaidCount: unpaidCount,
                           onAddExpense: () => _showExpenseDialog(),
                         ),
@@ -517,6 +560,9 @@ class _ExpensesPageState extends State<ExpensesPage> {
                                       DateTime.now().month,
                                     );
 
+                              final isBudgetMonthClosed =
+                                  isPlanned && _isPastMonth(monthDate);
+
                               return _ExpenseCard(
                                 title: title.toString(),
                                 category: category.toString(),
@@ -533,6 +579,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                                 ),
                                 isPaid: isPaid,
                                 isPlanned: isPlanned,
+                                isBudgetMonthClosed: isBudgetMonthClosed,
                                 reminderEnabled: reminderEnabled,
                                 spentAmount: _currencyFormatter.format(spent),
                                 remainingAmount: _currencyFormatter.format(
@@ -582,14 +629,16 @@ class _ExpensesPageState extends State<ExpensesPage> {
 class _ExpensesHeader extends StatelessWidget {
   final String totalAll;
   final String totalUnpaid;
-  final String plannedRemaining;
+  final String plannedAmount;
+  final String plannedLabel;
   final int unpaidCount;
   final VoidCallback onAddExpense;
 
   const _ExpensesHeader({
     required this.totalAll,
     required this.totalUnpaid,
-    required this.plannedRemaining,
+    required this.plannedAmount,
+    required this.plannedLabel,
     required this.unpaidCount,
     required this.onAddExpense,
   });
@@ -622,7 +671,8 @@ class _ExpensesHeader extends StatelessWidget {
                 _HeaderStatsGrid(
                   totalAll: totalAll,
                   totalUnpaid: totalUnpaid,
-                  plannedRemaining: plannedRemaining,
+                  plannedAmount: plannedAmount,
+                  plannedLabel: plannedLabel,
                   unpaidCount: unpaidCount,
                   isMobile: true,
                 ),
@@ -662,7 +712,8 @@ class _ExpensesHeader extends StatelessWidget {
                     _HeaderStatsGrid(
                       totalAll: totalAll,
                       totalUnpaid: totalUnpaid,
-                      plannedRemaining: plannedRemaining,
+                      plannedAmount: plannedAmount,
+                      plannedLabel: plannedLabel,
                       unpaidCount: unpaidCount,
                       isMobile: false,
                     ),
@@ -717,7 +768,7 @@ class _ExpensesHeaderText extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'Gestisci le spese con scadenza e i budget mensili che consumi poco alla volta.',
+          'Gestisci scadenze, rate mensili e budget che consumi poco alla volta.',
           style: TextStyle(
             color: const Color(0xFFD7DEE9),
             fontSize: isMobile ? 15 : 16,
@@ -732,14 +783,16 @@ class _ExpensesHeaderText extends StatelessWidget {
 class _HeaderStatsGrid extends StatelessWidget {
   final String totalAll;
   final String totalUnpaid;
-  final String plannedRemaining;
+  final String plannedAmount;
+  final String plannedLabel;
   final int unpaidCount;
   final bool isMobile;
 
   const _HeaderStatsGrid({
     required this.totalAll,
     required this.totalUnpaid,
-    required this.plannedRemaining,
+    required this.plannedAmount,
+    required this.plannedLabel,
     required this.unpaidCount,
     required this.isMobile,
   });
@@ -756,8 +809,8 @@ class _HeaderStatsGrid extends StatelessWidget {
         value: totalUnpaid,
       ),
       _HeaderMiniStat(
-        label: 'Residuo budget',
-        value: plannedRemaining,
+        label: plannedLabel,
+        value: plannedAmount,
       ),
       _HeaderMiniStat(
         label: 'Non pagate',
@@ -1188,6 +1241,7 @@ class _ExpenseCard extends StatelessWidget {
   final Color deadlineColor;
   final bool isPaid;
   final bool isPlanned;
+  final bool isBudgetMonthClosed;
   final bool reminderEnabled;
   final String spentAmount;
   final String remainingAmount;
@@ -1211,6 +1265,7 @@ class _ExpenseCard extends StatelessWidget {
     required this.deadlineColor,
     required this.isPaid,
     required this.isPlanned,
+    required this.isBudgetMonthClosed,
     required this.reminderEnabled,
     required this.spentAmount,
     required this.remainingAmount,
@@ -1332,8 +1387,9 @@ class _ExpenseCard extends StatelessWidget {
             ),
             const SizedBox(width: 16),
             Expanded(
-              child:
-                  isPlanned ? _plannedDesktopContent() : _standardDesktopContent(),
+              child: isPlanned
+                  ? _plannedDesktopContent()
+                  : _standardDesktopContent(),
             ),
             const SizedBox(width: 14),
             _actionsDesktop(),
@@ -1494,6 +1550,29 @@ class _ExpenseCard extends StatelessWidget {
   }
 
   Widget _plannedInfo() {
+    final numericTotal = _parseCurrencyText(amount);
+    final numericSpent = _parseCurrencyText(spentAmount);
+
+    final isOverBudget = numericSpent > numericTotal && numericTotal > 0;
+    final saved = numericTotal - numericSpent;
+
+    String resultText = 'Residuo: $remainingAmount';
+    IconData resultIcon = Icons.savings_rounded;
+
+    if (isBudgetMonthClosed) {
+      if (isOverBudget) {
+        resultText =
+            'Sforato: ${currencyFormatter.format(numericSpent - numericTotal)}';
+        resultIcon = Icons.warning_amber_rounded;
+      } else if (saved > 0) {
+        resultText = 'Risparmiato: ${currencyFormatter.format(saved)}';
+        resultIcon = Icons.savings_rounded;
+      } else {
+        resultText = 'Budget chiuso';
+        resultIcon = Icons.check_circle_rounded;
+      }
+    }
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1506,17 +1585,19 @@ class _ExpenseCard extends StatelessWidget {
           text: monthLabel,
           icon: Icons.calendar_view_month_rounded,
         ),
-        const _ColoredBadge(
-          text: 'Budget mensile',
-          color: Color(0xFF7C3AED),
+        _ColoredBadge(
+          text: isBudgetMonthClosed ? 'Mese chiuso' : 'Budget mensile',
+          color: isBudgetMonthClosed
+              ? const Color(0xFF16A34A)
+              : const Color(0xFF7C3AED),
         ),
         _InfoBadge(
           text: 'Speso: $spentAmount',
           icon: Icons.payments_rounded,
         ),
         _InfoBadge(
-          text: 'Residuo: $remainingAmount',
-          icon: Icons.savings_rounded,
+          text: resultText,
+          icon: resultIcon,
         ),
       ],
     );
@@ -1594,6 +1675,31 @@ class _ExpenseCard extends StatelessWidget {
     }
 
     final isOverBudget = numericSpent > numericTotal && numericTotal > 0;
+    final saved = numericTotal - numericSpent;
+
+    String thirdLabel = 'Residuo';
+    String thirdValue = remainingText;
+
+    if (isOverBudget) {
+      thirdLabel = 'Superato';
+      thirdValue = currencyFormatter.format(numericSpent - numericTotal);
+    } else if (isBudgetMonthClosed) {
+      if (saved > 0) {
+        thirdLabel = 'Risparmiato';
+        thirdValue = currencyFormatter.format(saved);
+      } else {
+        thirdLabel = 'Chiuso';
+        thirdValue = currencyFormatter.format(0);
+      }
+    }
+
+    Color progressColor = const Color(0xFF1677F2);
+
+    if (isOverBudget) {
+      progressColor = const Color(0xFFDC2626);
+    } else if (isBudgetMonthClosed && saved > 0) {
+      progressColor = const Color(0xFF16A34A);
+    }
 
     return Container(
       width: double.infinity,
@@ -1623,10 +1729,8 @@ class _ExpenseCard extends StatelessWidget {
               ),
               Expanded(
                 child: _BudgetMiniValue(
-                  label: isOverBudget ? 'Superato' : 'Residuo',
-                  value: isOverBudget
-                      ? currencyFormatter.format(numericSpent - numericTotal)
-                      : remainingText,
+                  label: thirdLabel,
+                  value: thirdValue,
                 ),
               ),
             ],
@@ -1638,11 +1742,19 @@ class _ExpenseCard extends StatelessWidget {
               minHeight: 10,
               value: progress,
               backgroundColor: const Color(0xFFE5ECF5),
-              color: isOverBudget
-                  ? const Color(0xFFDC2626)
-                  : const Color(0xFF1677F2),
+              color: progressColor,
             ),
           ),
+          if (isBudgetMonthClosed) ...[
+            const SizedBox(height: 12),
+            _ClosedBudgetMessage(
+              isOverBudget: isOverBudget,
+              savedAmount: currencyFormatter.format(saved > 0 ? saved : 0),
+              overAmount: currencyFormatter.format(
+                isOverBudget ? numericSpent - numericTotal : 0,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1833,6 +1945,66 @@ class _BudgetMiniValue extends StatelessWidget {
   }
 }
 
+class _ClosedBudgetMessage extends StatelessWidget {
+  final bool isOverBudget;
+  final String savedAmount;
+  final String overAmount;
+
+  const _ClosedBudgetMessage({
+    required this.isOverBudget,
+    required this.savedAmount,
+    required this.overAmount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bgColor = isOverBudget
+        ? const Color(0xFFFEE2E2)
+        : const Color(0xFFEAF8EF);
+
+    final textColor = isOverBudget
+        ? const Color(0xFF991B1B)
+        : const Color(0xFF166534);
+
+    final icon = isOverBudget
+        ? Icons.warning_amber_rounded
+        : Icons.savings_rounded;
+
+    final text = isOverBudget
+        ? 'Questo mese hai superato il budget di $overAmount.'
+        : 'Ottimo: questo mese hai risparmiato $savedAmount.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: textColor,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w900,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ExpenseIcon extends StatelessWidget {
   final bool isPaid;
   final bool isPlanned;
@@ -2019,8 +2191,12 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
 
   late DateTime _selectedDueDate;
   late DateTime _selectedMonth;
+  late DateTime _repeatUntilDate;
+
   late bool _isPaid;
   late bool _reminderEnabled;
+  late bool _repeatMonthly;
+
   late ExpenseType _expenseType;
 
   bool _loading = false;
@@ -2060,6 +2236,11 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
         ? rawMonth.toDate()
         : DateTime(DateTime.now().year, DateTime.now().month);
 
+    final rawRepeatUntil = data?['repeat_until_date'];
+    final repeatUntilDate = rawRepeatUntil is Timestamp
+        ? rawRepeatUntil.toDate()
+        : DateTime(dueDate.year, dueDate.month + 12, dueDate.day);
+
     _titleController = TextEditingController(text: title.toString());
 
     _amountController = TextEditingController(
@@ -2071,9 +2252,13 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     _selectedDueDate = dueDate;
     _selectedMonth = DateTime(monthDate.year, monthDate.month);
 
+    _repeatUntilDate = repeatUntilDate;
+
     _isPaid = data?['is_paid'] == true;
 
     _reminderEnabled = _isEditMode ? (data?['reminder_enabled'] == true) : true;
+
+    _repeatMonthly = _isEditMode ? (data?['repeat_monthly'] == true) : false;
   }
 
   @override
@@ -2082,6 +2267,48 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     _amountController.dispose();
     _categoryController.dispose();
     super.dispose();
+  }
+
+  int _daysInMonth(int year, int month) {
+    return DateTime(year, month + 1, 0).day;
+  }
+
+  DateTime _safeMonthlyDate({
+    required int year,
+    required int month,
+    required int preferredDay,
+  }) {
+    final lastDay = _daysInMonth(year, month);
+    final day = preferredDay > lastDay ? lastDay : preferredDay;
+
+    return DateTime(year, month, day);
+  }
+
+  List<DateTime> _monthlyDueDates({
+    required DateTime startDate,
+    required DateTime endDate,
+  }) {
+    final dates = <DateTime>[];
+
+    final preferredDay = startDate.day;
+
+    var cursor = DateTime(startDate.year, startDate.month);
+
+    while (!cursor.isAfter(DateTime(endDate.year, endDate.month))) {
+      final dueDate = _safeMonthlyDate(
+        year: cursor.year,
+        month: cursor.month,
+        preferredDay: preferredDay,
+      );
+
+      if (!dueDate.isBefore(startDate) && !dueDate.isAfter(endDate)) {
+        dates.add(dueDate);
+      }
+
+      cursor = DateTime(cursor.year, cursor.month + 1);
+    }
+
+    return dates;
   }
 
   Future<void> _pickDueDate() async {
@@ -2095,6 +2322,32 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     if (picked != null) {
       setState(() {
         _selectedDueDate = picked;
+
+        if (_repeatUntilDate.isBefore(_selectedDueDate)) {
+          _repeatUntilDate = DateTime(
+            _selectedDueDate.year,
+            _selectedDueDate.month + 12,
+            _selectedDueDate.day,
+          );
+        }
+      });
+    }
+  }
+
+  Future<void> _pickRepeatUntilDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _repeatUntilDate.isBefore(_selectedDueDate)
+          ? _selectedDueDate
+          : _repeatUntilDate,
+      firstDate: _selectedDueDate,
+      lastDate: DateTime(2100),
+      helpText: 'Seleziona fine periodo',
+    );
+
+    if (picked != null) {
+      setState(() {
+        _repeatUntilDate = picked;
       });
     }
   }
@@ -2115,48 +2368,102 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
     }
   }
 
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFFDC2626),
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _loading = true);
-
-    final amount = double.parse(
-      _amountController.text.replaceAll(',', '.'),
-    );
-
-    final typeValue = _isPlanned ? 'planned' : 'standard';
-
-    if (_isEditMode) {
-      await widget.financeService.updateExpense(
-        expenseId: widget.expenseDoc!.id,
-        title: _titleController.text.trim(),
-        amount: amount,
-        dueDate: _isPlanned ? null : _selectedDueDate,
-        category: _categoryController.text.trim(),
-        isPaid: _isPlanned ? false : _isPaid,
-        reminderEnabled: _isPlanned ? false : _reminderEnabled,
-        type: typeValue,
-        month: _isPlanned ? _selectedMonth : null,
-      );
-    } else {
-      await widget.financeService.addExpense(
-        title: _titleController.text.trim(),
-        amount: amount,
-        dueDate: _isPlanned ? null : _selectedDueDate,
-        category: _categoryController.text.trim(),
-        isPaid: _isPlanned ? false : _isPaid,
-        reminderEnabled: _isPlanned ? false : _reminderEnabled,
-        type: typeValue,
-        month: _isPlanned ? _selectedMonth : null,
-      );
+    if (!_isPlanned && _repeatMonthly && _repeatUntilDate.isBefore(_selectedDueDate)) {
+      _showError('La data di fine rata deve essere successiva alla prima scadenza.');
+      return;
     }
 
-    if (mounted) Navigator.pop(context);
+    setState(() => _loading = true);
+
+    try {
+      final amount = double.parse(
+        _amountController.text.replaceAll(',', '.'),
+      );
+
+      final typeValue = _isPlanned ? 'planned' : 'standard';
+
+      if (_isEditMode) {
+        await widget.financeService.updateExpense(
+          expenseId: widget.expenseDoc!.id,
+          title: _titleController.text.trim(),
+          amount: amount,
+          dueDate: _isPlanned ? null : _selectedDueDate,
+          category: _categoryController.text.trim(),
+          isPaid: _isPlanned ? false : _isPaid,
+          reminderEnabled: _isPlanned ? false : _reminderEnabled,
+          type: typeValue,
+          month: _isPlanned ? _selectedMonth : null,
+        );
+      } else {
+        if (!_isPlanned && _repeatMonthly) {
+          final dueDates = _monthlyDueDates(
+            startDate: _selectedDueDate,
+            endDate: _repeatUntilDate,
+          );
+
+          for (final dueDate in dueDates) {
+            await widget.financeService.addExpense(
+              title: _titleController.text.trim(),
+              amount: amount,
+              dueDate: dueDate,
+              category: _categoryController.text.trim(),
+              isPaid: false,
+              reminderEnabled: _reminderEnabled,
+              type: typeValue,
+              month: null,
+            );
+          }
+        } else {
+          await widget.financeService.addExpense(
+            title: _titleController.text.trim(),
+            amount: amount,
+            dueDate: _isPlanned ? null : _selectedDueDate,
+            category: _categoryController.text.trim(),
+            isPaid: _isPlanned ? false : _isPaid,
+            reminderEnabled: _isPlanned ? false : _reminderEnabled,
+            type: typeValue,
+            month: _isPlanned ? _selectedMonth : null,
+          );
+        }
+      }
+
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() => _loading = false);
+      _showError('Errore durante il salvataggio della spesa.');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final title = _isEditMode ? 'Modifica spesa' : 'Nuova spesa';
+
+    final repeatDatesCount = !_isPlanned && _repeatMonthly
+        ? _monthlyDueDates(
+            startDate: _selectedDueDate,
+            endDate: _repeatUntilDate,
+          ).length
+        : 0;
 
     return _BaseFormSheet(
       title: title,
@@ -2176,6 +2483,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
                   if (_isPlanned) {
                     _isPaid = false;
                     _reminderEnabled = false;
+                    _repeatMonthly = false;
                   }
                 });
               },
@@ -2215,7 +2523,7 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
               )
             else ...[
               _DateButton(
-                label: 'Data scadenza',
+                label: 'Prima scadenza',
                 date: _selectedDueDate,
                 displayFormat: 'dd/MM/yyyy',
                 onTap: _pickDueDate,
@@ -2224,11 +2532,13 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
               _SwitchTile(
                 title: 'Spesa già pagata',
                 value: _isPaid,
-                onChanged: (value) {
-                  setState(() {
-                    _isPaid = value;
-                  });
-                },
+                onChanged: _repeatMonthly
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _isPaid = value;
+                        });
+                      },
               ),
               const SizedBox(height: 8),
               _SwitchTile(
@@ -2240,9 +2550,98 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
                   });
                 },
               ),
+              const SizedBox(height: 8),
+              _SwitchTile(
+                title: 'Ripeti mensilmente',
+                value: _repeatMonthly,
+                onChanged: _isEditMode
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _repeatMonthly = value;
+
+                          if (value) {
+                            _isPaid = false;
+
+                            if (_repeatUntilDate.isBefore(_selectedDueDate)) {
+                              _repeatUntilDate = DateTime(
+                                _selectedDueDate.year,
+                                _selectedDueDate.month + 12,
+                                _selectedDueDate.day,
+                              );
+                            }
+                          }
+                        });
+                      },
+              ),
+              if (_repeatMonthly) ...[
+                const SizedBox(height: 10),
+                _DateButton(
+                  label: 'Fine rata / fine periodo',
+                  date: _repeatUntilDate,
+                  displayFormat: 'dd/MM/yyyy',
+                  onTap: _pickRepeatUntilDate,
+                ),
+                const SizedBox(height: 10),
+                _RecurringInfoBox(
+                  count: repeatDatesCount,
+                  startDate: _selectedDueDate,
+                  endDate: _repeatUntilDate,
+                ),
+              ],
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RecurringInfoBox extends StatelessWidget {
+  final int count;
+  final DateTime startDate;
+  final DateTime endDate;
+
+  const _RecurringInfoBox({
+    required this.count,
+    required this.startDate,
+    required this.endDate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final formatter = DateFormat('dd/MM/yyyy', 'it_IT');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE3F2FD),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFBFDBFE),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.repeat_rounded,
+            color: Color(0xFF1565C0),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Verranno create $count rate mensili, dalla scadenza ${formatter.format(startDate)} fino al ${formatter.format(endDate)}.',
+              style: const TextStyle(
+                color: Color(0xFF1565C0),
+                fontWeight: FontWeight.w800,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2683,8 +3082,8 @@ class _TextInput extends StatelessWidget {
 
         final isNumberKeyboard =
             keyboardType == TextInputType.number ||
-            keyboardType ==
-                const TextInputType.numberWithOptions(decimal: true);
+                keyboardType ==
+                    const TextInputType.numberWithOptions(decimal: true);
 
         if (isNumberKeyboard) {
           final parsed = double.tryParse(value.replaceAll(',', '.'));
@@ -2758,7 +3157,7 @@ class _DateButton extends StatelessWidget {
 class _SwitchTile extends StatelessWidget {
   final String title;
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
 
   const _SwitchTile({
     required this.title,
@@ -2768,10 +3167,12 @@ class _SwitchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final disabled = onChanged == null;
+
     return Container(
       padding: const EdgeInsets.only(left: 14, right: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7FAFE),
+        color: disabled ? const Color(0xFFF1F5F9) : const Color(0xFFF7FAFE),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: const Color(0xFFE5ECF5),
@@ -2783,9 +3184,9 @@ class _SwitchTile extends StatelessWidget {
         contentPadding: EdgeInsets.zero,
         title: Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF172033),
+            color: disabled ? const Color(0xFF94A3B8) : const Color(0xFF172033),
           ),
         ),
         activeColor: const Color(0xFF1677F2),

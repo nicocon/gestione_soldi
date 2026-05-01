@@ -33,6 +33,20 @@ class _DashboardPageState extends State<DashboardPage> {
   final DateFormat _monthFormatter = DateFormat('MMMM yyyy', 'it_IT');
   final DateFormat _shortMonthFormatter = DateFormat('MMM', 'it_IT');
 
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await _financeService.updateWatchSummary();
+        debugPrint('WATCH SUMMARY AGGIORNATO');
+      } catch (e) {
+        debugPrint('ERRORE WATCH SUMMARY: $e');
+      }
+    });
+  }
+
   double _amountFrom(dynamic value) {
     if (value is int) return value.toDouble();
     if (value is double) return value;

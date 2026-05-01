@@ -25,6 +25,7 @@ class _AuthPageState extends State<AuthPage> {
 
   late bool _isLogin;
   bool _isLoading = false;
+  bool _obscurePassword = true;
   String? _errorMessage;
 
   @override
@@ -39,6 +40,133 @@ class _AuthPageState extends State<AuthPage> {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  void _showPrivacyInfoModal() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 22,
+            vertical: 24,
+          ),
+          child: Container(
+            width: 460,
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.14),
+                  blurRadius: 28,
+                  offset: const Offset(0, 14),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1677F2).withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Icon(
+                      Icons.verified_user_rounded,
+                      color: Color(0xFF1677F2),
+                      size: 28,
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  const Text(
+                    'I tuoi dati restano tuoi',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF071F4F),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  const Text(
+                    'PocketPlan nasce per aiutarti a gestire meglio i tuoi soldi, non per vendere le tue informazioni.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF5A6680),
+                      fontSize: 14,
+                      height: 1.45,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  const _PrivacyInfoRow(
+                    icon: Icons.sell_outlined,
+                    title: 'Non vendiamo i tuoi dati',
+                    description:
+                        'Le informazioni che inserisci non vengono vendute, cedute o condivise con aziende esterne per finalità pubblicitarie.',
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  const _PrivacyInfoRow(
+                    icon: Icons.lock_outline_rounded,
+                    title: 'Sono collegati solo al tuo account',
+                    description:
+                        'Entrate, spese, obiettivi e abitudini di risparmio vengono usati solo per mostrarti il tuo piano personale dentro l’app.',
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  const _PrivacyInfoRow(
+                    icon: Icons.visibility_off_outlined,
+                    title: 'Nessuna trasmissione inutile',
+                    description:
+                        'I tuoi dati non vengono trasmessi a nessuno per marketing, profilazione pubblicitaria o utilizzi non legati al funzionamento di PocketPlan.',
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1677F2),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      child: const Text('Ho capito'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _submit() async {
@@ -188,13 +316,29 @@ class _AuthPageState extends State<AuthPage> {
 
                   TextFormField(
                     controller: _passwordController,
+                    obscureText: _obscurePassword,
                     decoration: InputDecoration(
                       labelText: 'Password',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
+                      suffixIcon: IconButton(
+                        tooltip: _obscurePassword
+                            ? 'Mostra password'
+                            : 'Nascondi password',
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off_rounded
+                              : Icons.visibility_rounded,
+                          color: const Color(0xFF5A6680),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
                     ),
-                    obscureText: true,
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
                         return 'Inserisci la password';
@@ -252,7 +396,7 @@ class _AuthPageState extends State<AuthPage> {
                     ),
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
                   TextButton(
                     onPressed: _isLoading
@@ -261,6 +405,7 @@ class _AuthPageState extends State<AuthPage> {
                             setState(() {
                               _isLogin = !_isLogin;
                               _errorMessage = null;
+                              _obscurePassword = true;
                             });
                           },
                     child: Text(
@@ -273,11 +418,98 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                   ),
+
+                  const SizedBox(height: 2),
+
+                  TextButton.icon(
+                    onPressed: _showPrivacyInfoModal,
+                    icon: const Icon(
+                      Icons.lock_rounded,
+                      size: 17,
+                    ),
+                    label: const Text('Come proteggiamo i tuoi dati?'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF1677F2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PrivacyInfoRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+
+  const _PrivacyInfoRow({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFF1677F2).withValues(alpha: 0.10),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            color: const Color(0xFF1677F2),
+            size: 21,
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF071F4F),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: const TextStyle(
+                    color: Color(0xFF4B5B75),
+                    fontSize: 12.4,
+                    height: 1.38,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
