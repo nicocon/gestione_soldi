@@ -28,6 +28,13 @@ class _AuthPageState extends State<AuthPage> {
   bool _obscurePassword = true;
   String? _errorMessage;
 
+  static const Color _primaryColor = Color(0xFF1677F2);
+  static const Color _titleColor = Color(0xFF071F4F);
+  static const Color _textColor = Color(0xFF5A6680);
+  static const Color _inputBorderColor = Color(0xFFDDE6F2);
+  static const Color _inputFocusedBorderColor = Color(0xFF1677F2);
+  static const Color _pageBackgroundColor = Color(0xFFF4F7FB);
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +47,59 @@ class _AuthPageState extends State<AuthPage> {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  InputDecoration _inputDecoration({
+    required String labelText,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: labelText,
+      labelStyle: const TextStyle(
+        color: _textColor,
+        fontWeight: FontWeight.w600,
+      ),
+      floatingLabelStyle: const TextStyle(
+        color: _primaryColor,
+        fontWeight: FontWeight.w800,
+      ),
+      filled: true,
+      fillColor: Colors.white,
+      hoverColor: Colors.white,
+      suffixIcon: suffixIcon,
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 16,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: _inputBorderColor,
+          width: 1.2,
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: _inputFocusedBorderColor,
+          width: 1.6,
+        ),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Colors.red,
+          width: 1.2,
+        ),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Colors.red,
+          width: 1.6,
+        ),
+      ),
+    );
   }
 
   void _showPrivacyInfoModal() {
@@ -74,70 +134,58 @@ class _AuthPageState extends State<AuthPage> {
                     width: 52,
                     height: 52,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1677F2).withValues(alpha: 0.10),
+                      color: _primaryColor.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(18),
                     ),
                     child: const Icon(
                       Icons.verified_user_rounded,
-                      color: Color(0xFF1677F2),
+                      color: _primaryColor,
                       size: 28,
                     ),
                   ),
-
                   const SizedBox(height: 16),
-
                   const Text(
                     'I tuoi dati restano tuoi',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Color(0xFF071F4F),
+                      color: _titleColor,
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-
                   const SizedBox(height: 10),
-
                   const Text(
                     'PocketPlan nasce per aiutarti a gestire meglio i tuoi soldi, non per vendere le tue informazioni.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Color(0xFF5A6680),
+                      color: _textColor,
                       fontSize: 14,
                       height: 1.45,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-
                   const SizedBox(height: 18),
-
                   const _PrivacyInfoRow(
                     icon: Icons.sell_outlined,
                     title: 'Non vendiamo i tuoi dati',
                     description:
                         'Le informazioni che inserisci non vengono vendute, cedute o condivise con aziende esterne per finalità pubblicitarie.',
                   ),
-
                   const SizedBox(height: 12),
-
                   const _PrivacyInfoRow(
                     icon: Icons.lock_outline_rounded,
                     title: 'Sono collegati solo al tuo account',
                     description:
                         'Entrate, spese, obiettivi e abitudini di risparmio vengono usati solo per mostrarti il tuo piano personale dentro l’app.',
                   ),
-
                   const SizedBox(height: 12),
-
                   const _PrivacyInfoRow(
                     icon: Icons.visibility_off_outlined,
                     title: 'Nessuna trasmissione inutile',
                     description:
                         'I tuoi dati non vengono trasmessi a nessuno per marketing, profilazione pubblicitaria o utilizzi non legati al funzionamento di PocketPlan.',
                   ),
-
                   const SizedBox(height: 22),
-
                   SizedBox(
                     width: double.infinity,
                     height: 48,
@@ -146,7 +194,7 @@ class _AuthPageState extends State<AuthPage> {
                         Navigator.of(context).pop();
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1677F2),
+                        backgroundColor: _primaryColor,
                         foregroundColor: Colors.white,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
@@ -214,7 +262,7 @@ class _AuthPageState extends State<AuthPage> {
     final title = _isLogin ? 'Accedi' : 'Registrati';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
+      backgroundColor: _pageBackgroundColor,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -232,217 +280,223 @@ class _AuthPageState extends State<AuthPage> {
                 ),
               ],
             ),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/images/pocketplan_logo_mini.png',
-                    width: 190,
-                    fit: BoxFit.contain,
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF071F4F),
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                inputDecorationTheme: const InputDecorationTheme(
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+                textSelectionTheme: const TextSelectionThemeData(
+                  cursorColor: _primaryColor,
+                  selectionColor: Color(0x33247CF2),
+                  selectionHandleColor: _primaryColor,
+                ),
+              ),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      'assets/images/pocketplan_logo_mini.png',
+                      width: 190,
+                      fit: BoxFit.contain,
                     ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  Text(
-                    _isLogin
-                        ? 'Bentornato nel tuo piano mensile'
-                        : 'Crea il tuo account e inizia a gestire meglio i tuoi soldi',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.black54,
-                      fontSize: 15,
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  if (!_isLogin) ...[
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: InputDecoration(
-                        labelText: 'Nome',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                    const SizedBox(height: 10),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: _titleColor,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _isLogin
+                          ? 'Bentornato nel tuo piano mensile'
+                          : 'Crea il tuo account e inizia a gestire meglio i tuoi soldi',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    if (!_isLogin) ...[
+                      TextFormField(
+                        controller: _nameController,
+                        cursorColor: _primaryColor,
+                        style: const TextStyle(
+                          color: _titleColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        decoration: _inputDecoration(
+                          labelText: 'Nome',
+                        ),
+                        validator: (value) {
+                          if (!_isLogin &&
+                              (value == null || value.trim().isEmpty)) {
+                            return 'Inserisci il nome';
+                          }
+
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    TextFormField(
+                      controller: _emailController,
+                      cursorColor: _primaryColor,
+                      style: const TextStyle(
+                        color: _titleColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: _inputDecoration(
+                        labelText: 'Email',
+                      ),
+                      keyboardType: TextInputType.emailAddress,
                       validator: (value) {
-                        if (!_isLogin &&
-                            (value == null || value.trim().isEmpty)) {
-                          return 'Inserisci il nome';
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Inserisci l’email';
+                        }
+
+                        if (!value.contains('@')) {
+                          return 'Email non valida';
                         }
 
                         return null;
                       },
                     ),
                     const SizedBox(height: 14),
-                  ],
-
-                  TextFormField(
-                    controller: _emailController,
-                    decoration: InputDecoration(
-                      labelText: 'Email',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Inserisci l’email';
-                      }
-
-                      if (!value.contains('@')) {
-                        return 'Email non valida';
-                      }
-
-                      return null;
-                    },
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  TextFormField(
-                    controller: _passwordController,
-                    obscureText: _obscurePassword,
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      suffixIcon: IconButton(
-                        tooltip: _obscurePassword
-                            ? 'Mostra password'
-                            : 'Nascondi password',
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility_off_rounded
-                              : Icons.visibility_rounded,
-                          color: const Color(0xFF5A6680),
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Inserisci la password';
-                      }
-
-                      if (value.length < 6) {
-                        return 'Minimo 6 caratteri';
-                      }
-
-                      return null;
-                    },
-                  ),
-
-                  if (_errorMessage != null) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      _errorMessage!,
-                      textAlign: TextAlign.center,
+                    TextFormField(
+                      controller: _passwordController,
+                      obscureText: _obscurePassword,
+                      cursorColor: _primaryColor,
                       style: const TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 24),
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1677F2),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(title),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  TextButton(
-                    onPressed: _isLoading
-                        ? null
-                        : () {
-                            setState(() {
-                              _isLogin = !_isLogin;
-                              _errorMessage = null;
-                              _obscurePassword = true;
-                            });
-                          },
-                    child: Text(
-                      _isLogin
-                          ? 'Non hai un account? Registrati'
-                          : 'Hai già un account? Accedi',
-                      style: const TextStyle(
-                        color: Color(0xFF1677F2),
+                        color: _titleColor,
                         fontWeight: FontWeight.w600,
                       ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 2),
-
-                  TextButton.icon(
-                    onPressed: _showPrivacyInfoModal,
-                    icon: const Icon(
-                      Icons.lock_rounded,
-                      size: 17,
-                    ),
-                    label: const Text('Come proteggiamo i tuoi dati?'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF1677F2),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
+                      decoration: _inputDecoration(
+                        labelText: 'Password',
+                        suffixIcon: IconButton(
+                          tooltip: _obscurePassword
+                              ? 'Mostra password'
+                              : 'Nascondi password',
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            color: _textColor,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
                       ),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Inserisci la password';
+                        }
+
+                        if (value.length < 6) {
+                          return 'Minimo 6 caratteri';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _primaryColor,
+                          disabledBackgroundColor:
+                              _primaryColor.withValues(alpha: 0.55),
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(title),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: _isLoading
+                          ? null
+                          : () {
+                              setState(() {
+                                _isLogin = !_isLogin;
+                                _errorMessage = null;
+                                _obscurePassword = true;
+                              });
+                            },
+                      child: Text(
+                        _isLogin
+                            ? 'Non hai un account? Registrati'
+                            : 'Hai già un account? Accedi',
+                        style: const TextStyle(
+                          color: _primaryColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    TextButton.icon(
+                      onPressed: _showPrivacyInfoModal,
+                      icon: const Icon(
+                        Icons.lock_rounded,
+                        size: 17,
+                      ),
+                      label: const Text('Come proteggiamo i tuoi dati?'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _primaryColor,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

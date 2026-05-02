@@ -21,7 +21,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _budgetAlertsEnabled = true;
   bool _goalAlertsEnabled = true;
-  bool _watchSyncEnabled = true;
+  bool _ticketUpdatesEnabled = true;
   bool _aiTipsEnabled = true;
 
   bool _isLoadingProfile = true;
@@ -507,6 +507,339 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         );
       },
+    );
+  }
+
+  Future<void> _showSupportTicketDialog() async {
+    final colors = _SettingsColors.of(context);
+
+    final formKey = GlobalKey<FormState>();
+    final subjectController = TextEditingController();
+    final messageController = TextEditingController();
+
+    String priority = 'Normale';
+    bool isSending = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: !isSending,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> sendTicket() async {
+              if (!formKey.currentState!.validate()) return;
+
+              final subject = subjectController.text.trim();
+
+              setDialogState(() {
+                isSending = true;
+              });
+
+              await Future<void>.delayed(const Duration(milliseconds: 450));
+
+              if (!mounted) return;
+
+              Navigator.pop(dialogContext);
+
+              await _showInfoDialog(
+                title: 'Ticket aperto',
+                description:
+                    'Il ticket "$subject" è stato creato correttamente. Per ora è una simulazione: più avanti lo colleghiamo al database e alla gestione reale dei ticket.',
+                icon: Icons.support_agent_rounded,
+              );
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: SingleChildScrollView(
+                    child: Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _DialogIcon(
+                                icon: Icons.support_agent_rounded,
+                                colors: colors,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Apri ticket di supporto',
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Descrivi il problema o la richiesta.',
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: isSending
+                                    ? null
+                                    : () => Navigator.pop(dialogContext),
+                                icon: const Icon(Icons.close_rounded),
+                                color: colors.textSecondary,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 22),
+                          _SupportTextField(
+                            controller: subjectController,
+                            label: 'Oggetto',
+                            hint: 'Es. Problema con una spesa',
+                            icon: Icons.title_rounded,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Inserisci un oggetto';
+                              }
+
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: priority,
+                            dropdownColor: colors.card,
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: 'Priorità',
+                              prefixIcon: Icon(
+                                Icons.priority_high_rounded,
+                                color: colors.primary,
+                              ),
+                              labelStyle: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              filled: true,
+                              fillColor: colors.cardSoft,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 16,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                borderSide: BorderSide(
+                                  color: colors.border,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                borderSide: BorderSide(
+                                  color: colors.primary,
+                                  width: 1.4,
+                                ),
+                              ),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'Bassa',
+                                child: Text('Bassa'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'Normale',
+                                child: Text('Normale'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'Alta',
+                                child: Text('Alta'),
+                              ),
+                            ],
+                            onChanged: isSending
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+
+                                    setDialogState(() {
+                                      priority = value;
+                                    });
+                                  },
+                          ),
+                          const SizedBox(height: 12),
+                          _SupportTextField(
+                            controller: messageController,
+                            label: 'Descrizione',
+                            hint:
+                                'Scrivi cosa non funziona o cosa ti serve...',
+                            icon: Icons.chat_bubble_outline_rounded,
+                            minLines: 5,
+                            maxLines: 7,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Inserisci una descrizione';
+                              }
+
+                              if (value.trim().length < 10) {
+                                return 'Descrivi meglio la richiesta';
+                              }
+
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: colors.primarySoft,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: colors.isDark
+                                    ? colors.border
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  color: colors.primary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Priorità selezionata: $priority. Più avanti salveremo il ticket nel database con stato, data e risposte del supporto.',
+                                    style: TextStyle(
+                                      color: colors.primary,
+                                      height: 1.35,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: OutlinedButton(
+                                    onPressed: isSending
+                                        ? null
+                                        : () => Navigator.pop(dialogContext),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: colors.textPrimary,
+                                      side: BorderSide(
+                                        color: colors.border,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    child: const Text('Annulla'),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: ElevatedButton.icon(
+                                    onPressed: isSending ? null : sendTicket,
+                                    icon: isSending
+                                        ? SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.2,
+                                              color: colors.primaryText,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.send_rounded,
+                                            size: 19,
+                                          ),
+                                    label: Text(
+                                      isSending ? 'Invio...' : 'Invia ticket',
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: colors.primary,
+                                      foregroundColor: colors.primaryText,
+                                      disabledBackgroundColor:
+                                          colors.primary.withValues(alpha: 0.45),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    subjectController.dispose();
+    messageController.dispose();
+  }
+
+  Future<void> _showMyTicketsDialog() async {
+    await _showInfoDialog(
+      title: 'I miei ticket',
+      description:
+          'Qui mostreremo la lista dei ticket aperti, in lavorazione e chiusi. Ogni ticket potrà avere stato, priorità, data di apertura e risposta del supporto.',
+      icon: Icons.confirmation_number_rounded,
     );
   }
 
@@ -1092,32 +1425,34 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                     _SettingsSection(
-                      title: 'Apple Watch',
-                      icon: Icons.watch_rounded,
+                      title: 'Supporto e ticket',
+                      icon: Icons.support_agent_rounded,
                       children: [
-                        _SettingsSwitchTile(
-                          icon: Icons.sync_rounded,
-                          title: 'Sincronizzazione Watch',
+                        _SettingsActionTile(
+                          icon: Icons.add_comment_rounded,
+                          title: 'Apri ticket di supporto',
                           subtitle:
-                              'Mantieni aggiornati riepilogo, entrate e spese.',
-                          value: _watchSyncEnabled,
-                          onChanged: (value) {
-                            setState(() {
-                              _watchSyncEnabled = value;
-                            });
-                          },
+                              'Segnala un problema o invia una richiesta.',
+                          onTap: _showSupportTicketDialog,
                         ),
                         _SettingsActionTile(
-                          icon: Icons.refresh_rounded,
-                          title: 'Forza sincronizzazione',
+                          icon: Icons.confirmation_number_rounded,
+                          title: 'I miei ticket',
                           subtitle:
-                              'Aggiorna manualmente i dati mostrati sul Watch.',
-                          onTap: () => _showInfoDialog(
-                            title: 'Sincronizzazione',
-                            description:
-                                'Più avanti collegheremo questo pulsante al servizio di sync del Watch.',
-                            icon: Icons.refresh_rounded,
-                          ),
+                              'Consulta lo stato delle richieste inviate.',
+                          onTap: _showMyTicketsDialog,
+                        ),
+                        _SettingsSwitchTile(
+                          icon: Icons.mark_email_unread_rounded,
+                          title: 'Aggiornamenti ticket',
+                          subtitle:
+                              'Ricevi notifiche quando un ticket viene aggiornato.',
+                          value: _ticketUpdatesEnabled,
+                          onChanged: (value) {
+                            setState(() {
+                              _ticketUpdatesEnabled = value;
+                            });
+                          },
                         ),
                       ],
                     ),
@@ -1484,6 +1819,96 @@ class _ProfileTextField extends StatelessWidget {
                 suffixIcon,
                 color: colors.textMuted,
               ),
+        labelStyle: TextStyle(
+          color: colors.textSecondary,
+          fontWeight: FontWeight.w700,
+        ),
+        hintStyle: TextStyle(
+          color: colors.textMuted,
+          fontWeight: FontWeight.w600,
+        ),
+        filled: true,
+        fillColor: colors.cardSoft,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.border,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.primary,
+            width: 1.4,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.danger,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: colors.danger,
+            width: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final int minLines;
+  final int maxLines;
+  final String? Function(String?)? validator;
+
+  const _SupportTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    this.minLines = 1,
+    this.maxLines = 1,
+    this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return TextFormField(
+      controller: controller,
+      minLines: minLines,
+      maxLines: maxLines,
+      validator: validator,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontWeight: FontWeight.w700,
+        height: 1.35,
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Padding(
+          padding: EdgeInsets.only(
+            bottom: maxLines > 1 ? 72 : 0,
+          ),
+          child: Icon(
+            icon,
+            color: colors.primary,
+          ),
+        ),
         labelStyle: TextStyle(
           color: colors.textSecondary,
           fontWeight: FontWeight.w700,
@@ -2183,8 +2608,8 @@ class _AppInfoBadges extends StatelessWidget {
           label: 'Dati protetti',
         ),
         _InfoBadge(
-          icon: Icons.cloud_done_rounded,
-          label: 'Cloud Sync',
+          icon: Icons.support_agent_rounded,
+          label: 'Supporto ticket',
         ),
       ],
     );
