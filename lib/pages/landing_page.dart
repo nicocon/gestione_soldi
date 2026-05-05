@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/landing_navbar.dart';
 import 'auth_page.dart';
+import 'download_page.dart';
 
 class LandingPage extends StatelessWidget {
   const LandingPage({super.key});
@@ -16,6 +18,15 @@ class LandingPage extends StatelessWidget {
     );
   }
 
+  void _goToDownload(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DownloadPage(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -23,7 +34,10 @@ class LandingPage extends StatelessWidget {
       body: SafeArea(
         child: Column(
           children: [
-            _Navbar(
+            LandingNavbar(
+              activeHome: true,
+              onHome: () {},
+              onDownload: () => _goToDownload(context),
               onLogin: () => _goToAuth(context, showRegister: false),
               onRegister: () => _goToAuth(context, showRegister: true),
             ),
@@ -68,82 +82,6 @@ class _LandingColors {
   static const Color success = Color(0xFF13B981);
   static const Color warning = Color(0xFFF59E0B);
   static const Color danger = Color(0xFFEF4444);
-}
-
-class _Navbar extends StatelessWidget {
-  final VoidCallback onLogin;
-  final VoidCallback onRegister;
-
-  const _Navbar({
-    required this.onLogin,
-    required this.onRegister,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final isMobile = width < 720;
-
-    return Container(
-      height: isMobile ? 68 : 76,
-      padding: EdgeInsets.symmetric(
-        horizontal: isMobile ? 16 : 32,
-      ),
-      decoration: const BoxDecoration(
-        color: _LandingColors.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: Color(0xFFE8EDF3),
-          ),
-        ),
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180),
-          child: Row(
-            children: [
-              SizedBox(
-                width: isMobile ? 155 : 260,
-                height: isMobile ? 48 : 58,
-                child: Image.asset(
-                  'assets/images/pocketplan_logo.png',
-                  fit: BoxFit.contain,
-                  alignment: Alignment.centerLeft,
-                ),
-              ),
-              const Spacer(),
-              if (!isMobile) ...[
-                TextButton(
-                  onPressed: onLogin,
-                  style: TextButton.styleFrom(
-                    foregroundColor: _LandingColors.dark,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 14,
-                    ),
-                  ),
-                  child: const Text(
-                    'Accedi',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              _PrimaryButton(
-                label: isMobile ? 'Accedi' : 'Registrati gratis',
-                icon: isMobile ? null : Icons.arrow_forward_rounded,
-                height: isMobile ? 40 : 44,
-                horizontalPadding: isMobile ? 18 : 22,
-                onPressed: isMobile ? onLogin : onRegister,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _HeroSection extends StatelessWidget {
@@ -355,8 +293,8 @@ class _MockPreviewCard extends StatelessWidget {
           const SizedBox(height: 18),
           const _MockBalanceCard(),
           const SizedBox(height: 14),
-          Row(
-            children: const [
+          const Row(
+            children: [
               Expanded(
                 child: _MiniMockCard(
                   icon: Icons.trending_up_rounded,
@@ -996,16 +934,16 @@ class _WhySection extends StatelessWidget {
               borderRadius: BorderRadius.circular(isMobile ? 30 : 36),
             ),
             child: isMobile
-                ? Column(
+                ? const Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       _WhyText(),
                       SizedBox(height: 24),
                       _WhyList(),
                     ],
                   )
-                : Row(
-                    children: const [
+                : const Row(
+                    children: [
                       Expanded(
                         child: _WhyText(),
                       ),
@@ -1422,8 +1360,8 @@ class _FooterSection extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               isMobile
-                  ? Column(
-                      children: const [
+                  ? const Column(
+                      children: [
                         Text(
                           'PocketPlan',
                           style: TextStyle(
@@ -1442,8 +1380,8 @@ class _FooterSection extends StatelessWidget {
                         ),
                       ],
                     )
-                  : Row(
-                      children: const [
+                  : const Row(
+                      children: [
                         Text(
                           'PocketPlan',
                           style: TextStyle(
