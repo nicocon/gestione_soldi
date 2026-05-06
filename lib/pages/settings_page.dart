@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 enum PocketPlanThemeMode {
   system,
@@ -18,6 +21,12 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  static const String _supportEmail = 'soluzioni@pocketplan.it';
+
+  static const String _emailJsServiceId = 'service_73zufzx';
+  static const String _emailJsTemplateId = 'template_ifzi2bi';
+  static const String _emailJsPublicKey = 'X56EUiEzL7jD0hVRl';
 
   bool _budgetAlertsEnabled = true;
   bool _goalAlertsEnabled = true;
@@ -200,6 +209,250 @@ class _SettingsPageState extends State<SettingsPage> {
         icon: Icons.error_outline_rounded,
       );
     }
+  }
+
+  Future<void> _showPlanDialog() async {
+    final colors = _SettingsColors.of(context);
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 24,
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 1080,
+              maxHeight: MediaQuery.sizeOf(context).height - 48,
+            ),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: colors.card,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.shadow.withValues(
+                      alpha: colors.isDark ? 0.35 : 0.14,
+                    ),
+                    blurRadius: 30,
+                    offset: const Offset(0, 16),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        _DialogIcon(
+                          icon: Icons.workspace_premium_rounded,
+                          colors: colors,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Piani PocketPlan',
+                                style: TextStyle(
+                                  color: colors.textPrimary,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Scegli il piano più adatto alle tue esigenze.',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
+                          color: colors.textSecondary,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isMobile = constraints.maxWidth < 780;
+
+                        final plans = [
+                          _PlanOptionCard(
+                            icon: Icons.person_rounded,
+                            title: 'Free',
+                            badge: 'Piano attuale',
+                            description:
+                                'Gratuito per tutti, con tutte le funzionalità disponibili adesso.',
+                            monthlyPrice: 'Gratis',
+                            annualPrice: null,
+                            annualSaving: null,
+                            features: const [
+                              'Dashboard personale',
+                              'Entrate e spese',
+                              'Obiettivi',
+                              'AI limitata a 3 domande al giorno',
+                              'Supporto ticket',
+                            ],
+                            highlighted: true,
+                            buttonEnabled: false,
+                            buttonText: 'Attivo',
+                            onTap: null,
+                          ),
+                          _PlanOptionCard(
+                            icon: Icons.family_restroom_rounded,
+                            title: 'Famiglia',
+                            badge: 'Prossimamente',
+                            description:
+                                'Pensato per gestire budget, spese e obiettivi condivisi in famiglia.',
+                            monthlyPrice: '1,99€/mese',
+                            annualPrice: '20€/anno',
+                            annualSaving: 'Risparmi 3,88€',
+                            features: const [
+                              'Gestione famiglia',
+                              'Membri collegati',
+                              'Budget condivisi',
+                              'Obiettivi familiari',
+                              'Statistiche avanzate',
+                            ],
+                            highlighted: false,
+                            buttonEnabled: false,
+                            buttonText: 'Non disponibile',
+                            onTap: null,
+                          ),
+                          _PlanOptionCard(
+                            icon: Icons.business_center_rounded,
+                            title: 'Azienda',
+                            badge: 'Prossimamente',
+                            description:
+                                'Una versione avanzata per piccole attività, team e gestione business.',
+                            monthlyPrice: '5,99€/mese',
+                            annualPrice: '65€/anno',
+                            annualSaving: 'Risparmi 6,88€',
+                            features: const [
+                              'Gestione aziendale',
+                              'Più profili o reparti',
+                              'Report finanziari',
+                              'Analisi avanzate',
+                              'Funzioni professionali',
+                            ],
+                            highlighted: false,
+                            buttonEnabled: false,
+                            buttonText: 'Non disponibile',
+                            onTap: null,
+                          ),
+                        ];
+
+                        if (isMobile) {
+                          return Column(
+                            children: plans
+                                .map(
+                                  (plan) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: plan,
+                                  ),
+                                )
+                                .toList(),
+                          );
+                        }
+
+                        return SizedBox(
+                          height: 500,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: plans
+                                .map(
+                                  (plan) => Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                      ),
+                                      child: plan,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: colors.primarySoft,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color:
+                              colors.isDark ? colors.border : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            color: colors.primary,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'I piani Famiglia e Azienda sono mostrati solo come anteprima. I pulsanti sono disattivati perché il pagamento verrà collegato più avanti.',
+                              style: TextStyle(
+                                color: colors.primary,
+                                height: 1.35,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colors.primary,
+                          foregroundColor: colors.primaryText,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        child: const Text('Chiudi'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _showThemeDialog() async {
@@ -510,6 +763,148 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _sendTicketEmailWithEmailJs({
+    required String ticketCode,
+    required String subject,
+    required String message,
+    required String priority,
+    required String userName,
+    required String userEmail,
+  }) async {
+    final response = await http.post(
+      Uri.parse('https://api.emailjs.com/api/v1.0/email/send'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'service_id': _emailJsServiceId,
+        'template_id': _emailJsTemplateId,
+        'user_id': _emailJsPublicKey,
+        'template_params': {
+          'to_email': _supportEmail,
+          'ticket_code': ticketCode,
+          'subject': subject,
+          'message': message,
+          'priority': priority,
+          'user_name': userName,
+          'user_email': userEmail,
+        },
+      }),
+    );
+
+    debugPrint('EmailJS status: ${response.statusCode}');
+    debugPrint('EmailJS body: ${response.body}');
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Errore EmailJS: ${response.statusCode} - ${response.body}',
+      );
+    }
+  }
+
+  Future<String> _createSupportTicket({
+    required String subject,
+    required String message,
+    required String priority,
+  }) async {
+    final user = _user;
+
+    if (user == null) {
+      throw Exception('Utente non disponibile');
+    }
+
+    final ticketRef = _db.collection('support_tickets').doc();
+
+    final userTicketRef = _db
+        .collection('users')
+        .doc(user.uid)
+        .collection('support_tickets')
+        .doc(ticketRef.id);
+
+    final ticketCode = 'PP-${DateTime.now().millisecondsSinceEpoch}';
+
+    final userName = _displayName;
+    final userEmail = user.email?.trim() ?? 'Email non disponibile';
+
+    final ticketData = {
+      'id': ticketRef.id,
+      'ticket_code': ticketCode,
+      'user_id': user.uid,
+      'user_name': userName,
+      'user_email': userEmail,
+      'subject': subject,
+      'message': message,
+      'priority': priority,
+      'status': 'open',
+      'status_label': 'Aperto',
+      'recipient_email': _supportEmail,
+      'email_provider': 'emailjs',
+      'email_sent': false,
+      'created_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
+    };
+
+    final batch = _db.batch();
+
+    batch.set(ticketRef, ticketData);
+    batch.set(userTicketRef, ticketData);
+
+    await batch.commit();
+
+    try {
+      await _sendTicketEmailWithEmailJs(
+        ticketCode: ticketCode,
+        subject: subject,
+        message: message,
+        priority: priority,
+        userName: userName,
+        userEmail: userEmail,
+      );
+
+      await Future.wait([
+        ticketRef.set(
+          {
+            'email_sent': true,
+            'email_sent_at': FieldValue.serverTimestamp(),
+            'updated_at': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ),
+        userTicketRef.set(
+          {
+            'email_sent': true,
+            'email_sent_at': FieldValue.serverTimestamp(),
+            'updated_at': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ),
+      ]);
+    } catch (error) {
+      await Future.wait([
+        ticketRef.set(
+          {
+            'email_sent': false,
+            'email_error': error.toString(),
+            'updated_at': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ),
+        userTicketRef.set(
+          {
+            'email_sent': false,
+            'email_error': error.toString(),
+            'updated_at': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ),
+      ]);
+
+      rethrow;
+    }
+
+    return ticketCode;
+  }
+
   Future<void> _showSupportTicketDialog() async {
     final colors = _SettingsColors.of(context);
 
@@ -530,23 +925,51 @@ class _SettingsPageState extends State<SettingsPage> {
               if (!formKey.currentState!.validate()) return;
 
               final subject = subjectController.text.trim();
+              final message = messageController.text.trim();
 
               setDialogState(() {
                 isSending = true;
               });
 
-              await Future<void>.delayed(const Duration(milliseconds: 450));
+              try {
+                final ticketCode = await _createSupportTicket(
+                  subject: subject,
+                  message: message,
+                  priority: priority,
+                );
 
-              if (!mounted) return;
+                if (!mounted) return;
 
-              Navigator.pop(dialogContext);
+                if (Navigator.canPop(dialogContext)) {
+                  Navigator.pop(dialogContext);
+                }
 
-              await _showInfoDialog(
-                title: 'Ticket aperto',
-                description:
-                    'Il ticket "$subject" è stato creato correttamente. Per ora è una simulazione: più avanti lo colleghiamo al database e alla gestione reale dei ticket.',
-                icon: Icons.support_agent_rounded,
-              );
+                await Future.delayed(const Duration(milliseconds: 150));
+
+                if (!mounted) return;
+
+                await _showInfoDialog(
+                  title: 'Ticket aperto',
+                  description:
+                      'Il ticket $ticketCode è stato creato correttamente. Riceveremo la richiesta su $_supportEmail.',
+                  icon: Icons.support_agent_rounded,
+                );
+              } catch (error) {
+                debugPrint('Errore creazione/invio ticket: $error');
+
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSending = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore invio ticket',
+                  description:
+                      'Il ticket potrebbe essere stato salvato, ma l’email non è partita. Errore: $error',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
             }
 
             return Dialog(
@@ -630,6 +1053,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                 return 'Inserisci un oggetto';
                               }
 
+                              if (value.trim().length < 4) {
+                                return 'Inserisci un oggetto più chiaro';
+                              }
+
                               return null;
                             },
                           ),
@@ -699,8 +1126,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           _SupportTextField(
                             controller: messageController,
                             label: 'Descrizione',
-                            hint:
-                                'Scrivi cosa non funziona o cosa ti serve...',
+                            hint: 'Scrivi cosa non funziona o cosa ti serve...',
                             icon: Icons.chat_bubble_outline_rounded,
                             minLines: 5,
                             maxLines: 7,
@@ -740,7 +1166,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
-                                    'Priorità selezionata: $priority. Più avanti salveremo il ticket nel database con stato, data e risposte del supporto.',
+                                    'Il ticket verrà salvato nel database e inviato a $_supportEmail. Priorità selezionata: $priority.',
                                     style: TextStyle(
                                       color: colors.primary,
                                       height: 1.35,
@@ -829,18 +1255,263 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       },
     );
-
-    subjectController.dispose();
-    messageController.dispose();
   }
 
   Future<void> _showMyTicketsDialog() async {
-    await _showInfoDialog(
-      title: 'I miei ticket',
-      description:
-          'Qui mostreremo la lista dei ticket aperti, in lavorazione e chiusi. Ogni ticket potrà avere stato, priorità, data di apertura e risposta del supporto.',
-      icon: Icons.confirmation_number_rounded,
-    );
+    final user = _user;
+
+    if (user == null) {
+      await _showInfoDialog(
+        title: 'Account non disponibile',
+        description:
+            'Non riesco a trovare l’utente corrente. Prova a uscire e rientrare nell’app.',
+        icon: Icons.person_off_rounded,
+      );
+      return;
+    }
+
+    final colors = _SettingsColors.of(context);
+
+    try {
+      final snapshot = await _db
+          .collection('users')
+          .doc(user.uid)
+          .collection('support_tickets')
+          .orderBy('created_at', descending: true)
+          .limit(20)
+          .get();
+
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 620,
+                maxHeight: MediaQuery.sizeOf(context).height - 48,
+              ),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: colors.card,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors.shadow.withValues(
+                        alpha: colors.isDark ? 0.35 : 0.14,
+                      ),
+                      blurRadius: 30,
+                      offset: const Offset(0, 16),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        _DialogIcon(
+                          icon: Icons.confirmation_number_rounded,
+                          colors: colors,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'I miei ticket',
+                                style: TextStyle(
+                                  color: colors.textPrimary,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Consulta le richieste inviate al supporto.',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
+                          color: colors.textSecondary,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    if (snapshot.docs.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: colors.cardSoft,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: colors.border,
+                          ),
+                        ),
+                        child: Text(
+                          'Non hai ancora aperto nessun ticket.',
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontWeight: FontWeight.w700,
+                            height: 1.35,
+                          ),
+                        ),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: snapshot.docs.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final doc = snapshot.docs[index];
+                            final data = doc.data();
+
+                            final ticketCode =
+                                (data['ticket_code'] ?? 'Ticket').toString();
+                            final subject =
+                                (data['subject'] ?? 'Senza oggetto').toString();
+                            final priority =
+                                (data['priority'] ?? 'Normale').toString();
+                            final statusLabel =
+                                (data['status_label'] ?? 'Aperto').toString();
+
+                            DateTime? createdAt;
+                            final rawCreatedAt = data['created_at'];
+
+                            if (rawCreatedAt is Timestamp) {
+                              createdAt = rawCreatedAt.toDate();
+                            }
+
+                            return Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: colors.cardSoft,
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: colors.border,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 42,
+                                    height: 42,
+                                    decoration: BoxDecoration(
+                                      color: colors.primarySoft,
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Icon(
+                                      Icons.support_agent_rounded,
+                                      color: colors.primary,
+                                      size: 21,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          ticketCode,
+                                          style: TextStyle(
+                                            color: colors.primary,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          subject,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: colors.textPrimary,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 14.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 7),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            _PlanBadge(text: statusLabel),
+                                            _PlanBadge(text: priority),
+                                            if (createdAt != null)
+                                              _PlanBadge(
+                                                text: _formatDate(createdAt),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colors.primary,
+                          foregroundColor: colors.primaryText,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        child: const Text('Chiudi'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Errore',
+        description:
+            'Non sono riuscito a caricare i ticket. Riprova tra poco.',
+        icon: Icons.error_outline_rounded,
+      );
+    }
   }
 
   Future<void> _showProfileDialog() async {
@@ -1348,12 +2019,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           subtitle:
                               'Gratis · AI limitata a 3 domande al giorno.',
                           trailing: const _PlanBadge(text: 'Free'),
-                          onTap: () => _showInfoDialog(
-                            title: 'Piano Premium',
-                            description:
-                                'Più avanti qui potremo aggiungere l’abbonamento con domande AI illimitate e funzioni avanzate.',
-                            icon: Icons.workspace_premium_rounded,
-                          ),
+                          onTap: _showPlanDialog,
                         ),
                       ],
                     ),
@@ -1659,6 +2325,307 @@ BoxDecoration _settingsCardDecoration(BuildContext context) {
       ),
     ],
   );
+}
+
+class _PlanOptionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String monthlyPrice;
+  final String? annualPrice;
+  final String? annualSaving;
+  final String badge;
+  final String description;
+  final List<String> features;
+  final bool highlighted;
+  final bool buttonEnabled;
+  final String buttonText;
+  final VoidCallback? onTap;
+
+  const _PlanOptionCard({
+    required this.icon,
+    required this.title,
+    required this.monthlyPrice,
+    required this.annualPrice,
+    required this.annualSaving,
+    required this.badge,
+    required this.description,
+    required this.features,
+    required this.highlighted,
+    required this.buttonEnabled,
+    required this.buttonText,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final isDesktopPlanModal = width >= 780;
+
+    final borderColor = highlighted ? colors.primary : colors.border;
+    final backgroundColor = highlighted ? colors.primarySoft : colors.cardSoft;
+
+    Widget priceSection() {
+      if (annualPrice == null) {
+        return _PlanPriceBox(
+          label: 'Piano gratuito',
+          price: monthlyPrice,
+          highlighted: highlighted,
+        );
+      }
+
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _PlanPriceBox(
+              label: 'Mensile',
+              price: monthlyPrice,
+              highlighted: false,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _PlanPriceBox(
+              label: 'Annuale',
+              price: annualPrice!,
+              saving: annualSaving,
+              highlighted: false,
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget featuresSection() {
+      return Column(
+        children: features
+            .map(
+              (feature) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 17,
+                      color: colors.success,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        feature,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            .toList(),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: borderColor,
+          width: highlighted ? 1.5 : 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize:
+            isDesktopPlanModal ? MainAxisSize.max : MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: highlighted ? colors.primary : colors.card,
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(
+                    color: highlighted ? colors.primary : colors.border,
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  color: highlighted ? colors.primaryText : colors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: highlighted ? colors.primary : colors.card,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: highlighted ? colors.primary : colors.border,
+                      ),
+                    ),
+                    child: Text(
+                      badge,
+                      style: TextStyle(
+                        color: highlighted
+                            ? colors.primaryText
+                            : colors.textMuted,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          priceSection(),
+
+          const SizedBox(height: 12),
+          Text(
+            description,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+              fontSize: 12.5,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          if (isDesktopPlanModal)
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: featuresSection(),
+              ),
+            )
+          else
+            featuresSection(),
+
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton(
+              onPressed: buttonEnabled ? onTap : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: highlighted ? colors.primary : colors.card,
+                foregroundColor:
+                    highlighted ? colors.primaryText : colors.textPrimary,
+                disabledBackgroundColor: colors.cardSofter,
+                disabledForegroundColor: colors.textMuted,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(
+                    color: highlighted ? colors.primary : colors.border,
+                  ),
+                ),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              child: Text(buttonText),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanPriceBox extends StatelessWidget {
+  final String label;
+  final String price;
+  final String? saving;
+  final bool highlighted;
+
+  const _PlanPriceBox({
+    required this.label,
+    required this.price,
+    this.saving,
+    required this.highlighted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: highlighted ? colors.primary : colors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: highlighted ? colors.primary : colors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: highlighted ? colors.primaryText : colors.textMuted,
+              fontWeight: FontWeight.w800,
+              fontSize: 11.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            price,
+            style: TextStyle(
+              color: highlighted ? colors.primaryText : colors.textPrimary,
+              fontWeight: FontWeight.w900,
+              fontSize: 17,
+            ),
+          ),
+          if (saving != null) ...[
+            const SizedBox(height: 5),
+            Text(
+              saving!,
+              style: TextStyle(
+                color: colors.success,
+                fontWeight: FontWeight.w900,
+                fontSize: 11.5,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _ThemeOptionTile extends StatelessWidget {
