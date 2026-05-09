@@ -35,6 +35,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _isLoadingProfile = true;
 
+  String _userRole = 'user';
+  bool get _isAdmin => _userRole == 'admin';
+
   String _profileName = '';
   String _profileSurname = '';
   String _profileCountry = '';
@@ -96,6 +99,69 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  String get _displayName {
+    final fullName = '$_profileName $_profileSurname'.trim();
+
+    if (fullName.isNotEmpty) {
+      return fullName;
+    }
+
+    final name = _user?.displayName?.trim();
+
+    if (name != null && name.isNotEmpty) {
+      return name;
+    }
+
+    final email = _user?.email ?? '';
+
+    if (email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'Utente PocketPlan';
+  }
+
+  String get _email {
+    final email = _user?.email?.trim();
+
+    if (email != null && email.isNotEmpty) {
+      return email;
+    }
+
+    return 'Email non disponibile';
+  }
+
+  String get _initials {
+    final name = _displayName.trim();
+
+    if (name.isEmpty) return 'P';
+
+    final parts = name
+        .split(' ')
+        .where((part) => part.trim().isNotEmpty)
+        .toList();
+
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+
+    return name[0].toUpperCase();
+  }
+
+  bool _isMobile(BuildContext context) {
+    return MediaQuery.sizeOf(context).width < 700;
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '';
+
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+
+    return '$day/$month/$year';
+  }
+
   Future<void> _loadUserProfile() async {
     final user = _user;
 
@@ -130,6 +196,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
 
       final savedThemeMode = data?['theme_mode']?.toString();
+      final savedRole = (data?['role'] ?? 'user').toString().trim();
 
       if (!mounted) return;
 
@@ -140,6 +207,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _profilePhone = (data?['phone'] ?? '').toString().trim();
         _profileBirthDate = birthDate;
         _selectedThemeMode = _themeModeFromString(savedThemeMode);
+        _userRole = savedRole.isEmpty ? 'user' : savedRole;
 
         if (_profileName.isEmpty && parts.isNotEmpty) {
           _profileName = parts.first;
@@ -211,7 +279,75 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _showPlanDialog() async {
+  Future<void> _showInfoDialog({
+    required String title,
+    required String description,
+    IconData icon = Icons.info_rounded,
+  }) async {
+    final colors = _SettingsColors.of(context);
+
+    await showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          backgroundColor: colors.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Row(
+            children: [
+              _DialogIcon(
+                icon: icon,
+                colors: colors,
+                size: 42,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            description,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          actions: [
+            SizedBox(
+              height: 46,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.primary,
+                  foregroundColor: colors.primaryText,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                child: const Text('Ho capito'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+    Future<void> _showPlanDialog() async {
     final colors = _SettingsColors.of(context);
 
     await showDialog(
@@ -631,139 +767,378 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  String get _displayName {
-    final fullName = '$_profileName $_profileSurname'.trim();
-
-    if (fullName.isNotEmpty) {
-      return fullName;
-    }
-
+  Future<void> _showProfileDialog() async {
     final user = _user;
-    final name = user?.displayName?.trim();
 
-    if (name != null && name.isNotEmpty) {
-      return name;
+    if (user == null) {
+      await _showInfoDialog(
+        title: 'Account non disponibile',
+        description:
+            'Non riesco a trovare l’utente corrente. Prova a uscire e rientrare nell’app.',
+        icon: Icons.person_off_rounded,
+      );
+      return;
     }
 
-    final email = user?.email ?? '';
-
-    if (email.contains('@')) {
-      return email.split('@').first;
-    }
-
-    return 'Utente PocketPlan';
-  }
-
-  String get _email {
-    final email = _user?.email?.trim();
-
-    if (email != null && email.isNotEmpty) {
-      return email;
-    }
-
-    return 'Email non disponibile';
-  }
-
-  String get _initials {
-    final name = _displayName.trim();
-
-    if (name.isEmpty) return 'P';
-
-    final parts = name
-        .split(' ')
-        .where((part) => part.trim().isNotEmpty)
-        .toList();
-
-    if (parts.length >= 2) {
-      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
-    }
-
-    return name[0].toUpperCase();
-  }
-
-  bool _isMobile(BuildContext context) {
-    return MediaQuery.sizeOf(context).width < 700;
-  }
-
-  String _formatDate(DateTime? date) {
-    if (date == null) return '';
-
-    final day = date.day.toString().padLeft(2, '0');
-    final month = date.month.toString().padLeft(2, '0');
-    final year = date.year.toString();
-
-    return '$day/$month/$year';
-  }
-
-  Future<void> _showInfoDialog({
-    required String title,
-    required String description,
-    IconData icon = Icons.info_rounded,
-  }) async {
     final colors = _SettingsColors.of(context);
+    final formKey = GlobalKey<FormState>();
+
+    final nameController = TextEditingController(text: _profileName);
+    final surnameController = TextEditingController(text: _profileSurname);
+    final countryController = TextEditingController(text: _profileCountry);
+    final phoneController = TextEditingController(text: _profilePhone);
+    final birthDateController = TextEditingController(
+      text: _formatDate(_profileBirthDate),
+    );
+
+    DateTime? selectedBirthDate = _profileBirthDate;
+    bool isSaving = false;
 
     await showDialog(
       context: context,
-      builder: (_) {
-        return AlertDialog(
-          backgroundColor: colors.card,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          title: Row(
-            children: [
-              _DialogIcon(
-                icon: icon,
-                colors: colors,
-                size: 42,
+      barrierDismissible: !isSaving,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> pickBirthDate() async {
+              final now = DateTime.now();
+
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: selectedBirthDate ??
+                    DateTime(now.year - 18, now.month, now.day),
+                firstDate: DateTime(1900),
+                lastDate: DateTime(now.year, now.month, now.day),
+                helpText: 'Seleziona data di nascita',
+                cancelText: 'Annulla',
+                confirmText: 'Conferma',
+                builder: (context, child) {
+                  return Theme(
+                    data: Theme.of(context).copyWith(
+                      colorScheme: colors.isDark
+                          ? const ColorScheme.dark(
+                              primary: Color(0xFF60A5FA),
+                              onPrimary: Color(0xFF0F172A),
+                              surface: Color(0xFF172033),
+                              onSurface: Color(0xFFF8FAFC),
+                            )
+                          : const ColorScheme.light(
+                              primary: Color(0xFF1677F2),
+                              onPrimary: Colors.white,
+                              surface: Colors.white,
+                              onSurface: Color(0xFF172033),
+                            ),
+                    ),
+                    child: child!,
+                  );
+                },
+              );
+
+              if (picked == null) return;
+
+              setDialogState(() {
+                selectedBirthDate = picked;
+                birthDateController.text = _formatDate(picked);
+              });
+            }
+
+            Future<void> saveProfile() async {
+              if (!formKey.currentState!.validate()) return;
+
+              final name = nameController.text.trim();
+              final surname = surnameController.text.trim();
+              final country = countryController.text.trim();
+              final phone = phoneController.text.trim();
+              final fullName = '$name $surname'.trim();
+
+              setDialogState(() {
+                isSaving = true;
+              });
+
+              try {
+                await user.updateDisplayName(fullName);
+                await user.reload();
+
+                await _db.collection('users').doc(user.uid).set(
+                  {
+                    'name': name,
+                    'surname': surname,
+                    'country': country,
+                    'phone': phone,
+                    'birth_date': selectedBirthDate == null
+                        ? null
+                        : Timestamp.fromDate(selectedBirthDate!),
+                    'email': user.email,
+                    'display_name': fullName,
+                    'role': _userRole,
+                    'updated_at': FieldValue.serverTimestamp(),
+                  },
+                  SetOptions(merge: true),
+                );
+
+                if (!mounted) return;
+
+                setState(() {
+                  _profileName = name;
+                  _profileSurname = surname;
+                  _profileCountry = country;
+                  _profilePhone = phone;
+                  _profileBirthDate = selectedBirthDate;
+                });
+
+                Navigator.pop(dialogContext);
+
+                await _showInfoDialog(
+                  title: 'Profilo aggiornato',
+                  description:
+                      'Le informazioni del profilo sono state salvate correttamente.',
+                  icon: Icons.check_circle_rounded,
+                );
+              } catch (_) {
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSaving = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore',
+                  description:
+                      'Non sono riuscito ad aggiornare il profilo. Riprova tra poco.',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontWeight: FontWeight.w900,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: SingleChildScrollView(
+                    child: Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              _DialogIcon(
+                                icon: Icons.badge_rounded,
+                                colors: colors,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Profilo personale',
+                                      style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Modifica i dati del tuo account.',
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: isSaving
+                                    ? null
+                                    : () => Navigator.pop(dialogContext),
+                                icon: const Icon(Icons.close_rounded),
+                                color: colors.textSecondary,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 22),
+                          _ProfileTextField(
+                            controller: nameController,
+                            label: 'Nome',
+                            hint: 'Es. Nicola',
+                            icon: Icons.person_rounded,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Inserisci il nome';
+                              }
+
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: surnameController,
+                            label: 'Cognome',
+                            hint: 'Es. Consoli',
+                            icon: Icons.badge_outlined,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: birthDateController,
+                            label: 'Data di nascita',
+                            hint: 'Seleziona una data',
+                            icon: Icons.cake_rounded,
+                            readOnly: true,
+                            onTap: pickBirthDate,
+                            suffixIcon: Icons.calendar_month_rounded,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: countryController,
+                            label: 'Paese',
+                            hint: 'Es. Italia',
+                            icon: Icons.public_rounded,
+                          ),
+                          const SizedBox(height: 12),
+                          _ProfileTextField(
+                            controller: phoneController,
+                            label: 'Telefono',
+                            hint: 'Es. +39 333 1234567',
+                            icon: Icons.phone_rounded,
+                            keyboardType: TextInputType.phone,
+                          ),
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: colors.cardSoft,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: colors.border,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.email_rounded,
+                                  color: colors.textSecondary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _email,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: OutlinedButton(
+                                    onPressed: isSaving
+                                        ? null
+                                        : () => Navigator.pop(dialogContext),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: colors.textPrimary,
+                                      side: BorderSide(
+                                        color: colors.border,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    child: const Text('Annulla'),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 50,
+                                  child: ElevatedButton(
+                                    onPressed: isSaving ? null : saveProfile,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: colors.primary,
+                                      foregroundColor: colors.primaryText,
+                                      disabledBackgroundColor:
+                                          colors.primary.withValues(alpha: 0.45),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    child: isSaving
+                                        ? SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.4,
+                                              color: colors.primaryText,
+                                            ),
+                                          )
+                                        : const Text('Salva'),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ],
-          ),
-          content: Text(
-            description,
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontWeight: FontWeight.w600,
-              height: 1.4,
-            ),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-          actions: [
-            SizedBox(
-              height: 46,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: colors.primary,
-                  foregroundColor: colors.primaryText,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                child: const Text('Ho capito'),
-              ),
-            ),
-          ],
+            );
+          },
         );
       },
     );
+
+    nameController.dispose();
+    surnameController.dispose();
+    countryController.dispose();
+    phoneController.dispose();
+    birthDateController.dispose();
   }
 
-  Future<void> _sendTicketEmailWithEmailJs({
+    Future<void> _sendTicketEmailWithEmailJs({
     required String ticketCode,
     required String subject,
     required String message,
@@ -840,14 +1215,35 @@ class _SettingsPageState extends State<SettingsPage> {
       'recipient_email': _supportEmail,
       'email_provider': 'emailjs',
       'email_sent': false,
+      'last_message': message,
+      'last_message_sender_role': 'user',
       'created_at': FieldValue.serverTimestamp(),
       'updated_at': FieldValue.serverTimestamp(),
+    };
+
+    final firstMessageData = {
+      'sender_id': user.uid,
+      'sender_role': 'user',
+      'sender_name': userName,
+      'sender_email': userEmail,
+      'message': message,
+      'created_at': FieldValue.serverTimestamp(),
     };
 
     final batch = _db.batch();
 
     batch.set(ticketRef, ticketData);
     batch.set(userTicketRef, ticketData);
+
+    batch.set(
+      ticketRef.collection('messages').doc(),
+      firstMessageData,
+    );
+
+    batch.set(
+      userTicketRef.collection('messages').doc(),
+      firstMessageData,
+    );
 
     await batch.commit();
 
@@ -905,7 +1301,427 @@ class _SettingsPageState extends State<SettingsPage> {
     return ticketCode;
   }
 
-  Future<void> _showSupportTicketDialog() async {
+  Future<void> _sendTicketMessage({
+    required String ticketId,
+    required String ownerUserId,
+    required String message,
+    required bool asAdmin,
+  }) async {
+    final user = _user;
+
+    if (user == null) {
+      throw Exception('Utente non disponibile');
+    }
+
+    final cleanMessage = message.trim();
+
+    if (cleanMessage.isEmpty) {
+      return;
+    }
+
+    final senderRole = asAdmin ? 'admin' : 'user';
+    final senderName = asAdmin ? 'Supporto PocketPlan' : _displayName;
+    final senderEmail = user.email?.trim() ?? '';
+
+    final ticketRef = _db.collection('support_tickets').doc(ticketId);
+
+    final userTicketRef = _db
+        .collection('users')
+        .doc(ownerUserId)
+        .collection('support_tickets')
+        .doc(ticketId);
+
+    final messageData = {
+      'sender_id': user.uid,
+      'sender_role': senderRole,
+      'sender_name': senderName,
+      'sender_email': senderEmail,
+      'message': cleanMessage,
+      'created_at': FieldValue.serverTimestamp(),
+    };
+
+    final updateData = {
+      'last_message': cleanMessage,
+      'last_message_sender_role': senderRole,
+      'updated_at': FieldValue.serverTimestamp(),
+      if (asAdmin) ...{
+        'status': 'pending',
+        'status_label': 'In attesa utente',
+      } else ...{
+        'status': 'open',
+        'status_label': 'Aperto',
+      },
+    };
+
+    final batch = _db.batch();
+
+    batch.set(ticketRef.collection('messages').doc(), messageData);
+    batch.set(userTicketRef.collection('messages').doc(), messageData);
+
+    batch.set(ticketRef, updateData, SetOptions(merge: true));
+    batch.set(userTicketRef, updateData, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+
+  Future<void> _showTicketChatDialog({
+    required String ticketId,
+    required String ownerUserId,
+    required String ticketCode,
+    required String subject,
+    required bool adminMode,
+  }) async {
+    final colors = _SettingsColors.of(context);
+    final replyController = TextEditingController();
+
+    bool isSending = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: !isSending,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> sendReply() async {
+              final text = replyController.text.trim();
+
+              if (text.isEmpty) return;
+
+              setDialogState(() {
+                isSending = true;
+              });
+
+              try {
+                await _sendTicketMessage(
+                  ticketId: ticketId,
+                  ownerUserId: ownerUserId,
+                  message: text,
+                  asAdmin: adminMode,
+                );
+
+                replyController.clear();
+
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSending = false;
+                });
+              } catch (_) {
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSending = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore',
+                  description:
+                      'Non sono riuscito a inviare la risposta. Riprova tra poco.',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 20,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 720,
+                  maxHeight: MediaQuery.sizeOf(context).height - 40,
+                ),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          _DialogIcon(
+                            icon: adminMode
+                                ? Icons.admin_panel_settings_rounded
+                                : Icons.support_agent_rounded,
+                            colors: colors,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  ticketCode,
+                                  style: TextStyle(
+                                    color: colors.primary,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  subject,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: isSending
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close_rounded),
+                            color: colors.textSecondary,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child:
+                            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: _db
+                              .collection('support_tickets')
+                              .doc(ticketId)
+                              .collection('messages')
+                              .orderBy('created_at', descending: false)
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return Center(
+                                child: CircularProgressIndicator(
+                                  color: colors.primary,
+                                ),
+                              );
+                            }
+
+                            final docs = snapshot.data?.docs ?? [];
+
+                            if (docs.isEmpty) {
+                              return Center(
+                                child: Text(
+                                  'Nessun messaggio presente.',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              );
+                            }
+
+                            return ListView.separated(
+                              physics: const BouncingScrollPhysics(),
+                              itemCount: docs.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 10),
+                              itemBuilder: (context, index) {
+                                final data = docs[index].data();
+
+                                final senderRole =
+                                    (data['sender_role'] ?? 'user').toString();
+                                final senderName =
+                                    (data['sender_name'] ?? '').toString();
+                                final message =
+                                    (data['message'] ?? '').toString();
+
+                                final isAdminMessage = senderRole == 'admin';
+
+                                DateTime? createdAt;
+                                final rawCreatedAt = data['created_at'];
+
+                                if (rawCreatedAt is Timestamp) {
+                                  createdAt = rawCreatedAt.toDate();
+                                }
+
+                                return Align(
+                                  alignment: isAdminMessage
+                                      ? Alignment.centerRight
+                                      : Alignment.centerLeft,
+                                  child: Container(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 520,
+                                    ),
+                                    padding: const EdgeInsets.all(13),
+                                    decoration: BoxDecoration(
+                                      color: isAdminMessage
+                                          ? colors.primary
+                                          : colors.cardSoft,
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(18),
+                                        topRight: const Radius.circular(18),
+                                        bottomLeft: Radius.circular(
+                                          isAdminMessage ? 18 : 6,
+                                        ),
+                                        bottomRight: Radius.circular(
+                                          isAdminMessage ? 6 : 18,
+                                        ),
+                                      ),
+                                      border: Border.all(
+                                        color: isAdminMessage
+                                            ? colors.primary
+                                            : colors.border,
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          isAdminMessage
+                                              ? 'Supporto PocketPlan'
+                                              : senderName.isEmpty
+                                                  ? 'Utente'
+                                                  : senderName,
+                                          style: TextStyle(
+                                            color: isAdminMessage
+                                                ? colors.primaryText
+                                                : colors.primary,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          message,
+                                          style: TextStyle(
+                                            color: isAdminMessage
+                                                ? colors.primaryText
+                                                : colors.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                        if (createdAt != null) ...[
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            _formatDate(createdAt),
+                                            style: TextStyle(
+                                              color: isAdminMessage
+                                                  ? colors.primaryText
+                                                      .withValues(alpha: 0.78)
+                                                  : colors.textMuted,
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: replyController,
+                              minLines: 1,
+                              maxLines: 4,
+                              enabled: !isSending,
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: adminMode
+                                    ? 'Scrivi una risposta al ticket...'
+                                    : 'Scrivi un nuovo messaggio...',
+                                hintStyle: TextStyle(
+                                  color: colors.textMuted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                filled: true,
+                                fillColor: colors.cardSoft,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                  borderSide: BorderSide(
+                                    color: colors.border,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                  borderSide: BorderSide(
+                                    color: colors.primary,
+                                    width: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            width: 52,
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: isSending ? null : sendReply,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: colors.primary,
+                                foregroundColor: colors.primaryText,
+                                disabledBackgroundColor:
+                                    colors.primary.withValues(alpha: 0.45),
+                                elevation: 0,
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                              child: isSending
+                                  ? SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.3,
+                                        color: colors.primaryText,
+                                      ),
+                                    )
+                                  : const Icon(Icons.send_rounded),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    replyController.dispose();
+  }
+
+    Future<void> _showSupportTicketDialog() async {
     final colors = _SettingsColors.of(context);
 
     final formKey = GlobalKey<FormState>();
@@ -1255,6 +2071,9 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       },
     );
+
+    subjectController.dispose();
+    messageController.dispose();
   }
 
   Future<void> _showMyTicketsDialog() async {
@@ -1272,118 +2091,128 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final colors = _SettingsColors.of(context);
 
-    try {
-      final snapshot = await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('support_tickets')
-          .orderBy('created_at', descending: true)
-          .limit(20)
-          .get();
-
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        builder: (dialogContext) {
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 24,
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 680,
+              maxHeight: MediaQuery.sizeOf(context).height - 48,
             ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: 620,
-                maxHeight: MediaQuery.sizeOf(context).height - 48,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: colors.card,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.shadow.withValues(
+                      alpha: colors.isDark ? 0.35 : 0.14,
+                    ),
+                    blurRadius: 30,
+                    offset: const Offset(0, 16),
+                  ),
+                ],
               ),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(22),
-                decoration: BoxDecoration(
-                  color: colors.card,
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colors.shadow.withValues(
-                        alpha: colors.isDark ? 0.35 : 0.14,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _DialogIcon(
+                        icon: Icons.confirmation_number_rounded,
+                        colors: colors,
                       ),
-                      blurRadius: 30,
-                      offset: const Offset(0, 16),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _DialogIcon(
-                          icon: Icons.confirmation_number_rounded,
-                          colors: colors,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'I miei ticket',
-                                style: TextStyle(
-                                  color: colors.textPrimary,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'I miei ticket',
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
                               ),
-                              const SizedBox(height: 3),
-                              Text(
-                                'Consulta le richieste inviate al supporto.',
-                                style: TextStyle(
-                                  color: colors.textSecondary,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Consulta e continua le richieste inviate al supporto.',
+                              style: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w600,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          icon: const Icon(Icons.close_rounded),
-                          color: colors.textSecondary,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    if (snapshot.docs.isEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: colors.cardSoft,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: colors.border,
-                          ),
-                        ),
-                        child: Text(
-                          'Non hai ancora aperto nessun ticket.',
-                          style: TextStyle(
-                            color: colors.textSecondary,
-                            fontWeight: FontWeight.w700,
-                            height: 1.35,
-                          ),
-                        ),
-                      )
-                    else
-                      Flexible(
-                        child: ListView.separated(
-                          shrinkWrap: true,
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        icon: const Icon(Icons.close_rounded),
+                        color: colors.textSecondary,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _db
+                          .collection('users')
+                          .doc(user.uid)
+                          .collection('support_tickets')
+                          .orderBy('updated_at', descending: true)
+                          .limit(30)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return Center(
+                            child: CircularProgressIndicator(
+                              color: colors.primary,
+                            ),
+                          );
+                        }
+
+                        final docs = snapshot.data?.docs ?? [];
+
+                        if (docs.isEmpty) {
+                          return Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: colors.cardSoft,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: colors.border,
+                              ),
+                            ),
+                            child: Text(
+                              'Non hai ancora aperto nessun ticket.',
+                              style: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w700,
+                                height: 1.35,
+                              ),
+                            ),
+                          );
+                        }
+
+                        return ListView.separated(
                           physics: const BouncingScrollPhysics(),
-                          itemCount: snapshot.docs.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 10),
                           itemBuilder: (context, index) {
-                            final doc = snapshot.docs[index];
+                            final doc = docs[index];
                             final data = doc.data();
 
                             final ticketCode =
@@ -1394,497 +2223,480 @@ class _SettingsPageState extends State<SettingsPage> {
                                 (data['priority'] ?? 'Normale').toString();
                             final statusLabel =
                                 (data['status_label'] ?? 'Aperto').toString();
+                            final lastMessage =
+                                (data['last_message'] ?? data['message'] ?? '')
+                                    .toString();
 
-                            DateTime? createdAt;
-                            final rawCreatedAt = data['created_at'];
+                            DateTime? updatedAt;
+                            final rawUpdatedAt = data['updated_at'];
 
-                            if (rawCreatedAt is Timestamp) {
-                              createdAt = rawCreatedAt.toDate();
+                            if (rawUpdatedAt is Timestamp) {
+                              updatedAt = rawUpdatedAt.toDate();
                             }
 
-                            return Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: colors.cardSoft,
+                            return Material(
+                              color: colors.cardSoft,
+                              borderRadius: BorderRadius.circular(18),
+                              child: InkWell(
                                 borderRadius: BorderRadius.circular(18),
-                                border: Border.all(
-                                  color: colors.border,
-                                ),
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    width: 42,
-                                    height: 42,
-                                    decoration: BoxDecoration(
-                                      color: colors.primarySoft,
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    child: Icon(
-                                      Icons.support_agent_rounded,
-                                      color: colors.primary,
-                                      size: 21,
+                                onTap: () {
+                                  Navigator.pop(dialogContext);
+
+                                  _showTicketChatDialog(
+                                    ticketId: doc.id,
+                                    ownerUserId: user.uid,
+                                    ticketCode: ticketCode,
+                                    subject: subject,
+                                    adminMode: false,
+                                  );
+                                },
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: colors.border,
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          ticketCode,
-                                          style: TextStyle(
-                                            color: colors.primary,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 12,
-                                          ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: colors.primarySoft,
+                                          borderRadius:
+                                              BorderRadius.circular(14),
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          subject,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: colors.textPrimary,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 14.5,
-                                          ),
+                                        child: Icon(
+                                          Icons.support_agent_rounded,
+                                          color: colors.primary,
+                                          size: 21,
                                         ),
-                                        const SizedBox(height: 7),
-                                        Wrap(
-                                          spacing: 8,
-                                          runSpacing: 8,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
-                                            _PlanBadge(text: statusLabel),
-                                            _PlanBadge(text: priority),
-                                            if (createdAt != null)
-                                              _PlanBadge(
-                                                text: _formatDate(createdAt),
+                                            Text(
+                                              ticketCode,
+                                              style: TextStyle(
+                                                color: colors.primary,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 12,
                                               ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              subject,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: colors.textPrimary,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 14.5,
+                                              ),
+                                            ),
+                                            if (lastMessage.isNotEmpty) ...[
+                                              const SizedBox(height: 5),
+                                              Text(
+                                                lastMessage,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: colors.textSecondary,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 12.5,
+                                                  height: 1.25,
+                                                ),
+                                              ),
+                                            ],
+                                            const SizedBox(height: 8),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: [
+                                                _PlanBadge(text: statusLabel),
+                                                _PlanBadge(text: priority),
+                                                if (updatedAt != null)
+                                                  _PlanBadge(
+                                                    text: _formatDate(updatedAt),
+                                                  ),
+                                              ],
+                                            ),
                                           ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Icon(
+                                        Icons.chevron_right_rounded,
+                                        color: colors.textMuted,
+                                      ),
+                                    ],
                                   ),
-                                ],
+                                ),
                               ),
                             );
                           },
-                        ),
-                      ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(dialogContext),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: colors.primary,
-                          foregroundColor: colors.primaryText,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        child: const Text('Chiudi'),
-                      ),
+                        );
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.primaryText,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      child: const Text('Chiudi'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          );
-        },
-      );
-    } catch (_) {
-      if (!mounted) return;
-
-      await _showInfoDialog(
-        title: 'Errore',
-        description:
-            'Non sono riuscito a caricare i ticket. Riprova tra poco.',
-        icon: Icons.error_outline_rounded,
-      );
-    }
+          ),
+        );
+      },
+    );
   }
 
-  Future<void> _showProfileDialog() async {
-    final user = _user;
-
-    if (user == null) {
+  Future<void> _showAdminTicketsDialog() async {
+    if (!_isAdmin) {
       await _showInfoDialog(
-        title: 'Account non disponibile',
+        title: 'Accesso non autorizzato',
         description:
-            'Non riesco a trovare l’utente corrente. Prova a uscire e rientrare nell’app.',
-        icon: Icons.person_off_rounded,
+            'Questa sezione è disponibile solo per gli amministratori PocketPlan.',
+        icon: Icons.lock_rounded,
       );
       return;
     }
 
     final colors = _SettingsColors.of(context);
-    final formKey = GlobalKey<FormState>();
-
-    final nameController = TextEditingController(text: _profileName);
-    final surnameController = TextEditingController(text: _profileSurname);
-    final countryController = TextEditingController(text: _profileCountry);
-    final phoneController = TextEditingController(text: _profilePhone);
-    final birthDateController = TextEditingController(
-      text: _formatDate(_profileBirthDate),
-    );
-
-    DateTime? selectedBirthDate = _profileBirthDate;
-    bool isSaving = false;
 
     await showDialog(
       context: context,
-      barrierDismissible: !isSaving,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> pickBirthDate() async {
-              final now = DateTime.now();
-
-              final picked = await showDatePicker(
-                context: context,
-                initialDate: selectedBirthDate ??
-                    DateTime(now.year - 18, now.month, now.day),
-                firstDate: DateTime(1900),
-                lastDate: DateTime(now.year, now.month, now.day),
-                helpText: 'Seleziona data di nascita',
-                cancelText: 'Annulla',
-                confirmText: 'Conferma',
-                builder: (context, child) {
-                  return Theme(
-                    data: Theme.of(context).copyWith(
-                      colorScheme: colors.isDark
-                          ? const ColorScheme.dark(
-                              primary: Color(0xFF60A5FA),
-                              onPrimary: Color(0xFF0F172A),
-                              surface: Color(0xFF172033),
-                              onSurface: Color(0xFFF8FAFC),
-                            )
-                          : const ColorScheme.light(
-                              primary: Color(0xFF1677F2),
-                              onPrimary: Colors.white,
-                              surface: Colors.white,
-                              onSurface: Color(0xFF172033),
-                            ),
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 780,
+              maxHeight: MediaQuery.sizeOf(context).height - 48,
+            ),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: colors.card,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.shadow.withValues(
+                      alpha: colors.isDark ? 0.35 : 0.14,
                     ),
-                    child: child!,
-                  );
-                },
-              );
-
-              if (picked == null) return;
-
-              setDialogState(() {
-                selectedBirthDate = picked;
-                birthDateController.text = _formatDate(picked);
-              });
-            }
-
-            Future<void> saveProfile() async {
-              if (!formKey.currentState!.validate()) return;
-
-              final name = nameController.text.trim();
-              final surname = surnameController.text.trim();
-              final country = countryController.text.trim();
-              final phone = phoneController.text.trim();
-              final fullName = '$name $surname'.trim();
-
-              setDialogState(() {
-                isSaving = true;
-              });
-
-              try {
-                await user.updateDisplayName(fullName);
-                await user.reload();
-
-                await _db.collection('users').doc(user.uid).set(
-                  {
-                    'name': name,
-                    'surname': surname,
-                    'country': country,
-                    'phone': phone,
-                    'birth_date': selectedBirthDate == null
-                        ? null
-                        : Timestamp.fromDate(selectedBirthDate!),
-                    'email': user.email,
-                    'display_name': fullName,
-                    'updated_at': FieldValue.serverTimestamp(),
-                  },
-                  SetOptions(merge: true),
-                );
-
-                if (!mounted) return;
-
-                setState(() {
-                  _profileName = name;
-                  _profileSurname = surname;
-                  _profileCountry = country;
-                  _profilePhone = phone;
-                  _profileBirthDate = selectedBirthDate;
-                });
-
-                Navigator.pop(dialogContext);
-
-                await _showInfoDialog(
-                  title: 'Profilo aggiornato',
-                  description:
-                      'Le informazioni del profilo sono state salvate correttamente.',
-                  icon: Icons.check_circle_rounded,
-                );
-              } catch (_) {
-                if (!mounted) return;
-
-                setDialogState(() {
-                  isSaving = false;
-                });
-
-                await _showInfoDialog(
-                  title: 'Errore',
-                  description:
-                      'Non sono riuscito ad aggiornare il profilo. Riprova tra poco.',
-                  icon: Icons.error_outline_rounded,
-                );
-              }
-            }
-
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 24,
+                    blurRadius: 30,
+                    offset: const Offset(0, 16),
+                  ),
+                ],
               ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: colors.card,
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: [
-                      BoxShadow(
-                        color: colors.shadow.withValues(
-                          alpha: colors.isDark ? 0.35 : 0.14,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _DialogIcon(
+                        icon: Icons.admin_panel_settings_rounded,
+                        colors: colors,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Area Admin Ticket',
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Visualizza e rispondi alle richieste degli utenti.',
+                              style: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
-                        blurRadius: 30,
-                        offset: const Offset(0, 16),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        icon: const Icon(Icons.close_rounded),
+                        color: colors.textSecondary,
                       ),
                     ],
                   ),
-                  child: SingleChildScrollView(
-                    child: Form(
-                      key: formKey,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              _DialogIcon(
-                                icon: Icons.badge_rounded,
-                                colors: colors,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Profilo personale',
-                                      style: TextStyle(
-                                        color: colors.textPrimary,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      'Modifica i dati del tuo account.',
-                                      style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: isSaving
-                                    ? null
-                                    : () => Navigator.pop(dialogContext),
-                                icon: const Icon(Icons.close_rounded),
-                                color: colors.textSecondary,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 22),
-                          _ProfileTextField(
-                            controller: nameController,
-                            label: 'Nome',
-                            hint: 'Es. Nicola',
-                            icon: Icons.person_rounded,
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Inserisci il nome';
-                              }
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _db
+                          .collection('support_tickets')
+                          .orderBy('updated_at', descending: true)
+                          .limit(50)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return Center(
+                            child: CircularProgressIndicator(
+                              color: colors.primary,
+                            ),
+                          );
+                        }
 
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          _ProfileTextField(
-                            controller: surnameController,
-                            label: 'Cognome',
-                            hint: 'Es. Consoli',
-                            icon: Icons.badge_outlined,
-                          ),
-                          const SizedBox(height: 12),
-                          _ProfileTextField(
-                            controller: birthDateController,
-                            label: 'Data di nascita',
-                            hint: 'Seleziona una data',
-                            icon: Icons.cake_rounded,
-                            readOnly: true,
-                            onTap: pickBirthDate,
-                            suffixIcon: Icons.calendar_month_rounded,
-                          ),
-                          const SizedBox(height: 12),
-                          _ProfileTextField(
-                            controller: countryController,
-                            label: 'Paese',
-                            hint: 'Es. Italia',
-                            icon: Icons.public_rounded,
-                          ),
-                          const SizedBox(height: 12),
-                          _ProfileTextField(
-                            controller: phoneController,
-                            label: 'Telefono',
-                            hint: 'Es. +39 333 1234567',
-                            icon: Icons.phone_rounded,
-                            keyboardType: TextInputType.phone,
-                          ),
-                          const SizedBox(height: 14),
-                          Container(
+                        final docs = snapshot.data?.docs ?? [];
+
+                        if (docs.isEmpty) {
+                          return Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.all(14),
+                            padding: const EdgeInsets.all(18),
                             decoration: BoxDecoration(
                               color: colors.cardSoft,
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: BorderRadius.circular(20),
                               border: Border.all(
                                 color: colors.border,
                               ),
                             ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.email_rounded,
-                                  color: colors.textSecondary,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    _email,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              'Non ci sono ticket da gestire.',
+                              style: TextStyle(
+                                color: colors.textSecondary,
+                                fontWeight: FontWeight.w700,
+                                height: 1.35,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 22),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: OutlinedButton(
-                                    onPressed: isSaving
-                                        ? null
-                                        : () => Navigator.pop(dialogContext),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: colors.textPrimary,
-                                      side: BorderSide(
-                                        color: colors.border,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                      ),
+                          );
+                        }
+
+                        return ListView.separated(
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final doc = docs[index];
+                            final data = doc.data();
+
+                            final ticketCode =
+                                (data['ticket_code'] ?? 'Ticket').toString();
+                            final subject =
+                                (data['subject'] ?? 'Senza oggetto').toString();
+                            final priority =
+                                (data['priority'] ?? 'Normale').toString();
+                            final statusLabel =
+                                (data['status_label'] ?? 'Aperto').toString();
+                            final userName =
+                                (data['user_name'] ?? 'Utente').toString();
+                            final userEmail =
+                                (data['user_email'] ?? '').toString();
+                            final ownerUserId =
+                                (data['user_id'] ?? '').toString();
+                            final lastMessage =
+                                (data['last_message'] ?? data['message'] ?? '')
+                                    .toString();
+
+                            DateTime? updatedAt;
+                            final rawUpdatedAt = data['updated_at'];
+
+                            if (rawUpdatedAt is Timestamp) {
+                              updatedAt = rawUpdatedAt.toDate();
+                            }
+
+                            return Material(
+                              color: colors.cardSoft,
+                              borderRadius: BorderRadius.circular(18),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(18),
+                                onTap: ownerUserId.isEmpty
+                                    ? null
+                                    : () {
+                                        Navigator.pop(dialogContext);
+
+                                        _showTicketChatDialog(
+                                          ticketId: doc.id,
+                                          ownerUserId: ownerUserId,
+                                          ticketCode: ticketCode,
+                                          subject: subject,
+                                          adminMode: true,
+                                        );
+                                      },
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: colors.border,
                                     ),
-                                    child: const Text('Annulla'),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: ElevatedButton(
-                                    onPressed: isSaving ? null : saveProfile,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: colors.primary,
-                                      foregroundColor: colors.primaryText,
-                                      disabledBackgroundColor:
-                                          colors.primary.withValues(alpha: 0.45),
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 46,
+                                        height: 46,
+                                        decoration: BoxDecoration(
+                                          color: colors.primarySoft,
+                                          borderRadius:
+                                              BorderRadius.circular(15),
+                                        ),
+                                        child: Icon(
+                                          Icons.support_agent_rounded,
+                                          color: colors.primary,
+                                          size: 22,
+                                        ),
                                       ),
-                                      textStyle: const TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                    child: isSaving
-                                        ? SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.4,
-                                              color: colors.primaryText,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    ticketCode,
+                                                    style: TextStyle(
+                                                      color: colors.primary,
+                                                      fontWeight:
+                                                          FontWeight.w900,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ),
+                                                _PlanBadge(text: statusLabel),
+                                              ],
                                             ),
-                                          )
-                                        : const Text('Salva'),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              subject,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: colors.textPrimary,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 15,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              '$userName · $userEmail',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: colors.textSecondary,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 12.5,
+                                              ),
+                                            ),
+                                            if (lastMessage.isNotEmpty) ...[
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                lastMessage,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: colors.textSecondary,
+                                                  fontWeight: FontWeight.w600,
+                                                  height: 1.25,
+                                                ),
+                                              ),
+                                            ],
+                                            const SizedBox(height: 8),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: [
+                                                _PlanBadge(text: priority),
+                                                if (updatedAt != null)
+                                                  _PlanBadge(
+                                                    text: _formatDate(updatedAt),
+                                                  ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Icon(
+                                        Icons.chevron_right_rounded,
+                                        color: colors.textMuted,
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
+                            );
+                          },
+                        );
+                      },
                     ),
                   ),
-                ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.primaryText,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      child: const Text('Chiudi'),
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
-
-    nameController.dispose();
-    surnameController.dispose();
-    countryController.dispose();
-    phoneController.dispose();
-    birthDateController.dispose();
   }
 
-  Future<void> _showDeleteDataDialog() async {
+    Future<void> _showDeleteDataDialog() async {
     final colors = _SettingsColors.of(context);
 
     await showDialog(
@@ -2122,6 +2934,21 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ],
                     ),
+                    if (_isAdmin)
+                      _SettingsSection(
+                        title: 'Area Admin',
+                        icon: Icons.admin_panel_settings_rounded,
+                        children: [
+                          _SettingsActionTile(
+                            icon: Icons.support_agent_rounded,
+                            title: 'Gestione ticket',
+                            subtitle:
+                                'Visualizza e rispondi ai ticket degli utenti.',
+                            trailing: const _PlanBadge(text: 'Admin'),
+                            onTap: _showAdminTicketsDialog,
+                          ),
+                        ],
+                      ),
                     _SettingsSection(
                       title: 'Sicurezza',
                       icon: Icons.lock_rounded,
@@ -2507,9 +3334,7 @@ class _PlanOptionCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-
           priceSection(),
-
           const SizedBox(height: 12),
           Text(
             description,
@@ -2521,7 +3346,6 @@ class _PlanOptionCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-
           if (isDesktopPlanModal)
             Expanded(
               child: SingleChildScrollView(
@@ -2531,7 +3355,6 @@ class _PlanOptionCard extends StatelessWidget {
             )
           else
             featuresSection(),
-
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,

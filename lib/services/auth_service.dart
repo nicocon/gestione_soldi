@@ -28,6 +28,7 @@ class AuthService {
         'uid': user.uid,
         'name': name.trim(),
         'email': email.trim(),
+        'role': 'user',
         'currency': 'EUR',
         'created_at': FieldValue.serverTimestamp(),
       });
