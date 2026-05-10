@@ -243,19 +243,72 @@ class _ExpensesPageState extends State<ExpensesPage> {
     return 'Scade tra $diff gg';
   }
 
-  Color _deadlineColor(DateTime dueDate, bool isPaid) {
-    if (isPaid) return const Color(0xFF16A34A);
-
+  int _deadlineDiffDays(DateTime dueDate) {
     final today = DateTime.now();
     final currentDate = DateTime(today.year, today.month, today.day);
     final targetDate = DateTime(dueDate.year, dueDate.month, dueDate.day);
 
-    final diff = targetDate.difference(currentDate).inDays;
+    return targetDate.difference(currentDate).inDays;
+  }
 
-    if (diff < 0) return const Color(0xFFDC2626);
-    if (diff <= 3) return const Color(0xFFF59E0B);
+  bool _isExpenseInWarningRange({
+    required Map<String, dynamic> data,
+    required DateTime dueDate,
+  }) {
+    if (_isPlannedExpense(data)) return false;
+    if (data['is_paid'] == true) return false;
+    if (data['reminder_enabled'] != true) return false;
+
+    final diff = _deadlineDiffDays(dueDate);
+
+    return diff <= 2;
+  }
+
+  Color _deadlineColor(DateTime dueDate, bool isPaid) {
+    if (isPaid) return const Color(0xFF16A34A);
+
+    final diff = _deadlineDiffDays(dueDate);
+
+    if (diff <= 0) return const Color(0xFFDC2626);
+    if (diff <= 2) return const Color(0xFFF59E0B);
 
     return const Color(0xFF2563EB);
+  }
+
+  List<_ExpenseDeadlineAlert> _expenseDeadlineAlerts(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final alerts = <_ExpenseDeadlineAlert>[];
+
+    for (final doc in docs) {
+      final data = doc.data();
+
+      if (_isPlannedExpense(data)) continue;
+      if (data['is_paid'] == true) continue;
+      if (data['reminder_enabled'] != true) continue;
+
+      final dueDateRaw = data['due_date'];
+
+      if (dueDateRaw is! Timestamp) continue;
+
+      final dueDate = dueDateRaw.toDate();
+      final diff = _deadlineDiffDays(dueDate);
+
+      if (diff > 2) continue;
+
+      alerts.add(
+        _ExpenseDeadlineAlert(
+          title: (data['title'] ?? 'Spesa').toString(),
+          amount: _amountFrom(data['amount']),
+          dueDate: dueDate,
+          diffDays: diff,
+        ),
+      );
+    }
+
+    alerts.sort((a, b) => a.diffDays.compareTo(b.diffDays));
+
+    return alerts;
   }
 
   double _sumAllExpected(
@@ -543,6 +596,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
               final totalPlannedRemaining = _sumPlannedRemaining(monthDocs);
               final totalPlannedSaved = _sumPlannedSaved(monthDocs);
               final unpaidCount = _unpaidStandardCount(monthDocs);
+              final deadlineAlerts = _expenseDeadlineAlerts(monthDocs);
 
               final isSelectedMonthClosed = _isPastMonth(_selectedMonth);
 
@@ -600,6 +654,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
                               onNext: _goToNextMonth,
                               onCurrentMonth: _goToCurrentMonth,
                             ),
+                            if (deadlineAlerts.isNotEmpty) ...[
+                              SizedBox(height: isMobile ? 14 : 18),
+                              _ExpenseDeadlineNotification(
+                                alerts: deadlineAlerts,
+                                currencyFormatter: _currencyFormatter,
+                                dateFormatter: _dateFormatter,
+                              ),
+                            ],
                             SizedBox(height: isMobile ? 14 : 18),
                             _FilterBar(
                               selectedFilter: _selectedFilter,
@@ -680,6 +742,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                                       dueDate,
                                       isPaid,
                                     ),
+                                    deadlineDiffDays: isPlanned ? null : _deadlineDiffDays(dueDate),
                                     isPaid: isPaid,
                                     isPlanned: isPlanned,
                                     isBudgetMonthClosed: isBudgetMonthClosed,
@@ -737,6 +800,155 @@ class _ExpensesPageState extends State<ExpensesPage> {
         },
       ),
     );
+  }
+}
+
+class _ExpenseDeadlineAlert {
+  final String title;
+  final double amount;
+  final DateTime dueDate;
+  final int diffDays;
+
+  const _ExpenseDeadlineAlert({
+    required this.title,
+    required this.amount,
+    required this.dueDate,
+    required this.diffDays,
+  });
+}
+
+class _ExpenseDeadlineNotification extends StatelessWidget {
+  final List<_ExpenseDeadlineAlert> alerts;
+  final NumberFormat currencyFormatter;
+  final DateFormat dateFormatter;
+
+  const _ExpenseDeadlineNotification({
+    required this.alerts,
+    required this.currencyFormatter,
+    required this.dateFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+    final urgentAlerts = alerts.where((alert) => alert.diffDays <= 0).toList();
+    final hasUrgent = urgentAlerts.isNotEmpty;
+
+    final mainAlert = alerts.first;
+
+    final backgroundColor = hasUrgent
+        ? colors.isDark
+            ? const Color(0xFF450A0A)
+            : const Color(0xFFFFF1F2)
+        : colors.isDark
+            ? const Color(0xFF451A03)
+            : const Color(0xFFFFFBEB);
+
+    final borderColor =
+        hasUrgent ? const Color(0xFFDC2626) : const Color(0xFFF59E0B);
+
+    final textColor = hasUrgent
+        ? colors.isDark
+            ? const Color(0xFFFCA5A5)
+            : const Color(0xFF991B1B)
+        : colors.isDark
+            ? const Color(0xFFFDE68A)
+            : const Color(0xFF92400E);
+
+    final icon = hasUrgent
+        ? Icons.error_rounded
+        : Icons.notifications_active_rounded;
+
+    final title = hasUrgent
+        ? 'Attenzione: hai spese in scadenza oggi o già scadute'
+        : 'Promemoria: hai spese in scadenza nei prossimi 2 giorni';
+
+    final mainMessage = _messageForAlert(mainAlert);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: borderColor.withValues(alpha: 0.75),
+          width: 1.3,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: borderColor.withValues(alpha: colors.isDark ? 0.20 : 0.12),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              icon,
+              color: borderColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  mainMessage,
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.w800,
+                    height: 1.35,
+                  ),
+                ),
+                if (alerts.length > 1) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '+ altre ${alerts.length - 1} spese da controllare',
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.85),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _messageForAlert(_ExpenseDeadlineAlert alert) {
+    final amount = currencyFormatter.format(alert.amount);
+    final date = dateFormatter.format(alert.dueDate);
+
+    if (alert.diffDays < 0) {
+      return '${alert.title} · $amount · scaduta da ${alert.diffDays.abs()} giorni ($date).';
+    }
+
+    if (alert.diffDays == 0) {
+      return '${alert.title} · $amount · scade oggi ($date).';
+    }
+
+    if (alert.diffDays == 1) {
+      return '${alert.title} · $amount · scade domani ($date).';
+    }
+
+    return '${alert.title} · $amount · scade tra ${alert.diffDays} giorni ($date).';
   }
 }
 
@@ -1544,6 +1756,7 @@ class _ExpenseCard extends StatelessWidget {
   final String monthLabel;
   final String deadlineLabel;
   final Color deadlineColor;
+  final int? deadlineDiffDays;
   final bool isPaid;
   final bool isPlanned;
   final bool isBudgetMonthClosed;
@@ -1569,6 +1782,7 @@ class _ExpenseCard extends StatelessWidget {
     required this.monthLabel,
     required this.deadlineLabel,
     required this.deadlineColor,
+    required this.deadlineDiffDays,
     required this.isPaid,
     required this.isPlanned,
     required this.isBudgetMonthClosed,
@@ -1592,14 +1806,46 @@ class _ExpenseCard extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 700;
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 14),
       padding: EdgeInsets.all(isMobile ? 16 : 18),
-      decoration: _expensesCardDecoration(context).copyWith(
-        borderRadius: BorderRadius.circular(24),
-      ),
+      decoration: _cardDecoration(context),
       child: isMobile ? _mobileLayout(context) : _desktopLayout(context),
+    );
+  }
+
+  BoxDecoration _cardDecoration(BuildContext context) {
+    final colors = _ExpensesColors.of(context);
+
+    if (!isPlanned && !isPaid && deadlineDiffDays != null) {
+      if (deadlineDiffDays! <= 0) {
+        return _expensesCardDecoration(context).copyWith(
+          color: colors.isDark ? const Color(0xFF450A0A) : const Color(0xFFFFF1F2),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: const Color(0xFFDC2626),
+            width: 1.4,
+          ),
+        );
+      }
+
+      if (deadlineDiffDays! <= 2) {
+        return _expensesCardDecoration(context).copyWith(
+          color: colors.isDark ? const Color(0xFF451A03) : const Color(0xFFFFFBEB),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: const Color(0xFFF59E0B),
+            width: 1.4,
+          ),
+        );
+      }
+    }
+
+    return _expensesCardDecoration(context).copyWith(
+      borderRadius: BorderRadius.circular(24),
     );
   }
 

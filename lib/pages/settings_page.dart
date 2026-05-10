@@ -441,7 +441,6 @@ class _SettingsPageState extends State<SettingsPage> {
                               'Dashboard personale',
                               'Entrate e spese',
                               'Obiettivi',
-                              'AI limitata a 3 domande al giorno',
                               'Supporto ticket',
                             ],
                             highlighted: true,
@@ -2829,7 +2828,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           icon: Icons.workspace_premium_rounded,
                           title: 'Piano attuale',
                           subtitle:
-                              'Gratis · AI limitata a 3 domande al giorno.',
+                              'Gratis',
                           trailing: const _PlanBadge(text: 'Free'),
                           onTap: _showPlanDialog,
                         ),

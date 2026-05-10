@@ -26,7 +26,6 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   late Future<Map<String, dynamic>> _plannerFuture;
 
   bool _isAsking = false;
-  bool _markingAiInsightsAsRead = false;
 
   final Set<String> _chatInsightIds = {};
   final Set<String> _activeChatInsightIds = {};
@@ -115,7 +114,31 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     return null;
   }
 
-    Future<void> _archiveAiInsight(String insightId) async {
+  Future<void> _markAiInsightAsRead(String insightId) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || insightId.trim().isEmpty) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('ai_insights')
+          .doc(insightId)
+          .set(
+        {
+          'is_read': true,
+          'read_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {
+      // Non blocchiamo mai la chat per un errore di lettura messaggio.
+    }
+  }
+
+  Future<void> _archiveAiInsight(String insightId) async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null || insightId.trim().isEmpty) return;
@@ -211,49 +234,8 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
       _isAsking = false;
     });
 
+    _markAiInsightAsRead(id);
     _scrollChatToBottom();
-  }
-
-  Future<void> _markAiInsightsAsReadAfterView() async {
-    if (_markingAiInsightsAsRead) return;
-
-    _markingAiInsightsAsRead = true;
-
-    try {
-      await Future.delayed(const Duration(milliseconds: 1400));
-
-      if (!mounted) return;
-
-      final user = FirebaseAuth.instance.currentUser;
-
-      if (user == null) return;
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('ai_insights')
-          .where('is_read', isEqualTo: false)
-          .limit(50)
-          .get();
-
-      if (snapshot.docs.isEmpty) return;
-
-      final batch = FirebaseFirestore.instance.batch();
-
-      for (final doc in snapshot.docs) {
-        batch.update(doc.reference, {
-          'is_read': true,
-          'read_at': FieldValue.serverTimestamp(),
-          'updated_at': FieldValue.serverTimestamp(),
-        });
-      }
-
-      await batch.commit();
-    } catch (_) {
-      // Non blocchiamo mai la pagina AI Planner per un errore sui messaggi.
-    } finally {
-      _markingAiInsightsAsRead = false;
-    }
   }
 
   String _normalizeQuestion(String value) {
@@ -405,6 +387,12 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
       'come posso sistemare',
       'che mi consigli',
       'cosa mi consigli',
+      'budget mensile',
+      'budget mensili',
+      'pianificata',
+      'pianificate',
+      'spese pianificate',
+      'spesa pianificata',
     ];
 
     return _containsAny(text, financialWords);
@@ -418,7 +406,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
           '• Posso spendere 100€ questo mese?\n'
           '• Quanto posso risparmiare?\n'
           '• Sto spendendo troppo?\n'
-          '• Quali spese dovrei controllare?\n'
+          '• Quali budget dovrei controllare?\n'
           '• Quanto posso usare al giorno senza rischiare?\n'
           '• Come posso raggiungere meglio i miei obiettivi?';
     }
@@ -647,7 +635,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
         _AIInsight(
           title: 'Spese sopra le entrate',
           message:
-              'Questo mese le uscite totali superano le entrate. Ti consiglio di bloccare le spese extra e concentrarti prima sulle spese obbligatorie.',
+              'Questo mese le uscite totali superano le entrate. Ti consiglio di evitare nuovi acquisti non necessari e controllare prima le spese obbligatorie già previste.',
           type: 'danger',
           icon: Icons.error_rounded,
           priority: 100,
@@ -658,7 +646,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
         _AIInsight(
           title: 'Budget quasi esaurito',
           message:
-              'Hai già impegnato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio rallentare con le spese non essenziali fino a fine mese.',
+              'Hai già impegnato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio evitare nuove spese non necessarie fino a fine mese.',
           type: 'warning',
           icon: Icons.warning_amber_rounded,
           priority: 90,
@@ -669,7 +657,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
         _AIInsight(
           title: 'Spese da controllare',
           message:
-              'Le spese stanno salendo: hai usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate. Sei ancora in tempo per mantenere un buon margine.',
+              'Le uscite stanno salendo: hai usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate. Le spese già sostenute servono per capire il mese, mentre i budget pianificati sono quelli che puoi eventualmente rivedere.',
           type: 'warning',
           icon: Icons.speed_rounded,
           priority: 75,
@@ -693,7 +681,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
         _AIInsight(
           title: 'Margine negativo',
           message:
-              'Il budget disponibile è negativo. Prima di nuovi acquisti, controlla le spese non pagate e valuta quali costi puoi rimandare o ridurre.',
+              'Il budget disponibile è negativo. Prima di nuovi acquisti, controlla le spese non pagate e valuta se qualche budget mensile pianificato può essere rivisto.',
           type: 'danger',
           icon: Icons.account_balance_wallet_rounded,
           priority: 98,
@@ -811,16 +799,15 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     }
 
     if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
-      final categoryRatio = totalExpenses > 0 ? topCategoryAmount / totalExpenses : 0;
+      final categoryRatio =
+          totalExpenses > 0 ? topCategoryAmount / totalExpenses : 0;
 
       if (categoryRatio >= 0.35) {
-        final possibleSaving = topCategoryAmount * 0.20;
-
         insights.add(
           _AIInsight(
-            title: 'Categoria molto pesante',
+            title: 'Categoria da osservare',
             message:
-                'La categoria “$topCategoryName” pesa molto sulle uscite. Riducendola del 20%, potresti liberare circa ${_formatMoney(possibleSaving)}.',
+                'La categoria “$topCategoryName” pesa molto sulle uscite del mese. Non significa per forza che vada ridotta: potrebbe contenere spese necessarie o imprevisti. Se dentro questa categoria hai anche budget mensili modificabili, puoi valutare di rivederli con prudenza.',
             type: 'warning',
             icon: Icons.pie_chart_rounded,
             priority: 78,
@@ -840,7 +827,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
             _AIInsight(
               title: 'Spese in aumento',
               message:
-                  'Questo mese stai spendendo ${_formatMoney(difference)} in più rispetto al mese scorso. Controlla le categorie più alte per capire dove intervenire.',
+                   'Questo mese hai registrato ${_formatMoney(difference)} in più rispetto al mese scorso. Controlla le categorie più alte per capire cosa è cambiato e, se possibile, rivedi solo i budget mensili modificabili.',
               type: 'warning',
               icon: Icons.trending_up_rounded,
               priority: 76,
@@ -903,7 +890,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
         const _AIInsight(
           title: 'Aggiungi le prime spese',
           message:
-              'Quando inserisci le spese, l’AI Planner può capire dove stai spendendo di più e suggerirti come risparmiare.',
+               'Quando inserisci spese e budget, l’AI Planner può capire meglio il mese e suggerirti quali budget mensili potresti rivedere.',
           type: 'info',
           icon: Icons.receipt_long_rounded,
           priority: 60,
@@ -1064,7 +1051,6 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                           _AIInboxCard(
                             stream: _aiInsightsStream(),
                             dateFrom: _aiInsightDate,
-                            onUnreadVisible: _markAiInsightsAsReadAfterView,
                             onInsightVisibleInChat: _startChatFromInsight,
                             onArchiveInsight: _archiveAiInsight,
                           ),
@@ -2186,9 +2172,9 @@ class _AIChatCard extends StatelessWidget {
                     onQuickQuestion('Quanto posso risparmiare questo mese?'),
               ),
               _QuickQuestionChip(
-                label: 'Sto spendendo troppo?',
+                label: 'Quali budget controllo?',
                 onTap: () =>
-                    onQuickQuestion('Sto spendendo troppo questo mese?'),
+                    onQuickQuestion('Quali budget posso controllare questo mese?'),
               ),
             ],
           ),
@@ -2638,8 +2624,8 @@ class _CategoriesCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _SectionTitle(
-            title: 'Categorie più pesanti',
-            subtitle: 'Dove stanno andando i soldi questo mese.',
+            title: 'Categorie principali',
+            subtitle: 'Analisi delle uscite del mese, senza giudicare le singole spese.',
             icon: Icons.pie_chart_rounded,
           ),
           const SizedBox(height: 18),
@@ -3278,7 +3264,6 @@ class _EmptyMiniState extends StatelessWidget {
 class _AIInboxCard extends StatelessWidget {
   final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
   final DateTime? Function(dynamic value) dateFrom;
-  final Future<void> Function() onUnreadVisible;
   final void Function({
     required String id,
     required String title,
@@ -3289,7 +3274,6 @@ class _AIInboxCard extends StatelessWidget {
   const _AIInboxCard({
     required this.stream,
     required this.dateFrom,
-    required this.onUnreadVisible,
     required this.onInsightVisibleInChat,
     required this.onArchiveInsight,
   });
@@ -3310,17 +3294,6 @@ class _AIInboxCard extends StatelessWidget {
 
             return data['is_archived'] != true;
           }).take(8).toList();
-          final hasUnread = docs.any((doc) {
-            final data = doc.data();
-
-            return data['is_read'] != true;
-          });
-
-          if (hasUnread) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              onUnreadVisible();
-            });
-          }
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3346,7 +3319,7 @@ class _AIInboxCard extends StatelessWidget {
                   icon: Icons.auto_awesome_outlined,
                   title: 'Nessun messaggio AI',
                   text:
-                      'Quando l’AI noterà spese alte, budget quasi finito o possibilità di risparmio, vedrai qui i suoi messaggi.',
+                     'Quando l’AI noterà budget quasi finiti, uscite importanti o possibilità di rivedere budget mensili, vedrai qui i suoi messaggi.',
                 )
               else
                 Column(

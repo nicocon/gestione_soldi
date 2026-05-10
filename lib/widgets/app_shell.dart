@@ -87,17 +87,42 @@ class _AppShellState extends State<AppShell> {
         .collection('users')
         .doc(user.uid)
         .collection('ai_insights')
-        .where('is_read', isEqualTo: false)
         .snapshots()
         .map((snapshot) {
-      final visibleUnreadDocs = snapshot.docs.where((doc) {
-        final data = doc.data();
+          final visibleDocs = snapshot.docs.where((doc) {
+            final data = doc.data();
 
-        return data['is_archived'] != true;
-      }).toList();
+            return data['is_archived'] != true;
+          }).toList();
 
-      return visibleUnreadDocs.length;
-    });
+          return visibleDocs.length;
+        });
+  }
+
+  Stream<int> _unpaidExpensesCountStream() {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return Stream<int>.value(0);
+    }
+
+    return _db
+        .collection('users')
+        .doc(user.uid)
+        .collection('expenses')
+        .snapshots()
+        .map((snapshot) {
+          final unpaidDocs = snapshot.docs.where((doc) {
+            final data = doc.data();
+
+            final isPlanned = data['type'] == 'planned';
+            final isPaid = data['is_paid'] == true;
+
+            return !isPlanned && !isPaid;
+          }).toList();
+
+          return unpaidDocs.length;
+        });
   }
 
   void _selectPage(int index) {
@@ -151,15 +176,11 @@ class _AppShellState extends State<AppShell> {
                 onPressed: () => Navigator.pop(dialogContext, false),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: colors.textPrimary,
-                  side: BorderSide(
-                    color: colors.border,
-                  ),
+                  side: BorderSide(color: colors.border),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 child: const Text('Annulla'),
               ),
@@ -177,9 +198,7 @@ class _AppShellState extends State<AppShell> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                  ),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
             ),
@@ -212,35 +231,22 @@ class _AppShellState extends State<AppShell> {
       ),
       filled: true,
       fillColor: colors.isDark ? colors.cardSofter : Colors.white,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 15,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: colors.border,
-        ),
+        borderSide: BorderSide(color: colors.border),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: colors.primary,
-          width: 1.5,
-        ),
+        borderSide: BorderSide(color: colors.primary, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(
-          color: Colors.red,
-        ),
+        borderSide: const BorderSide(color: Colors.red),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(
-          color: Colors.red,
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Colors.red, width: 1.5),
       ),
     );
   }
@@ -267,9 +273,7 @@ class _AppShellState extends State<AppShell> {
                 decoration: BoxDecoration(
                   color: colors.card,
                   borderRadius: BorderRadius.circular(28),
-                  border: Border.all(
-                    color: colors.border,
-                  ),
+                  border: Border.all(color: colors.border),
                   boxShadow: [
                     BoxShadow(
                       color: colors.shadow.withValues(
@@ -365,9 +369,7 @@ class _AppShellState extends State<AppShell> {
                             color: colors.textPrimary,
                             fontWeight: FontWeight.w700,
                           ),
-                          decoration: _ticketInputDecoration(
-                            label: 'Priorità',
-                          ),
+                          decoration: _ticketInputDecoration(label: 'Priorità'),
                           items: const [
                             DropdownMenuItem(
                               value: 'Bassa',
@@ -455,13 +457,10 @@ class _AppShellState extends State<AppShell> {
                               child: SizedBox(
                                 height: 48,
                                 child: OutlinedButton(
-                                  onPressed: () =>
-                                      Navigator.pop(dialogContext),
+                                  onPressed: () => Navigator.pop(dialogContext),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: colors.textPrimary,
-                                    side: BorderSide(
-                                      color: colors.border,
-                                    ),
+                                    side: BorderSide(color: colors.border),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16),
                                     ),
@@ -484,8 +483,9 @@ class _AppShellState extends State<AppShell> {
                                       return;
                                     }
 
-                                    final subject =
-                                        _ticketSubjectController.text.trim();
+                                    final subject = _ticketSubjectController
+                                        .text
+                                        .trim();
 
                                     Navigator.pop(dialogContext);
 
@@ -544,138 +544,148 @@ class _AppShellState extends State<AppShell> {
       builder: (context, aiUnreadSnapshot) {
         final aiUnreadCount = aiUnreadSnapshot.data ?? 0;
 
-        final colors = _ShellColors.of(context);
-        final isDesktop = _isDesktop(context);
-        final showSupportButton = kIsWeb && isDesktop;
-        final selectedItem = _items[_selectedIndex];
-        final settingsSelected = _selectedIndex == 5;
+        return StreamBuilder<int>(
+          stream: _unpaidExpensesCountStream(),
+          initialData: 0,
+          builder: (context, unpaidExpensesSnapshot) {
+            final unpaidExpensesCount = unpaidExpensesSnapshot.data ?? 0;
 
-        return Scaffold(
-          backgroundColor: colors.scaffold,
-          extendBody: true,
-          appBar: isDesktop
-              ? null
-              : AppBar(
-                  titleSpacing: 14,
-                  title: SizedBox(
-                    height: 46,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Image.asset(
-                        colors.logoAsset,
-                        width: 145,
-                        fit: BoxFit.contain,
-                        alignment: Alignment.centerLeft,
-                        errorBuilder: (_, __, ___) {
-                          return Text(
-                            'PocketPlan',
-                            style: TextStyle(
-                              color: colors.textPrimary,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          );
-                        },
+            final colors = _ShellColors.of(context);
+            final isDesktop = _isDesktop(context);
+            final showSupportButton = kIsWeb && isDesktop;
+            final selectedItem = _items[_selectedIndex];
+            final settingsSelected = _selectedIndex == 5;
+
+            return Scaffold(
+              backgroundColor: colors.scaffold,
+              extendBody: true,
+              appBar: isDesktop
+                  ? null
+                  : AppBar(
+                      titleSpacing: 14,
+                      title: SizedBox(
+                        height: 46,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Image.asset(
+                            colors.logoAsset,
+                            width: 145,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.centerLeft,
+                            errorBuilder: (_, __, ___) {
+                              return Text(
+                                'PocketPlan',
+                                style: TextStyle(
+                                  color: colors.textPrimary,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  centerTitle: false,
-                  backgroundColor: colors.card,
-                  surfaceTintColor: colors.card,
-                  elevation: 0,
-                  actions: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Material(
-                            color: settingsSelected
-                                ? colors.primarySoft
-                                : colors.cardSofter,
-                            borderRadius: BorderRadius.circular(14),
-                            child: InkWell(
-                              onTap: _openSettings,
-                              borderRadius: BorderRadius.circular(14),
-                              child: SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: Icon(
-                                  Icons.settings_rounded,
-                                  color: settingsSelected
-                                      ? colors.primary
-                                      : colors.textMuted,
-                                  size: 22,
+                      centerTitle: false,
+                      backgroundColor: colors.card,
+                      surfaceTintColor: colors.card,
+                      elevation: 0,
+                      actions: [
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Material(
+                                color: settingsSelected
+                                    ? colors.primarySoft
+                                    : colors.cardSofter,
+                                borderRadius: BorderRadius.circular(14),
+                                child: InkWell(
+                                  onTap: _openSettings,
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: SizedBox(
+                                    width: 44,
+                                    height: 44,
+                                    child: Icon(
+                                      Icons.settings_rounded,
+                                      color: settingsSelected
+                                          ? colors.primary
+                                          : colors.textMuted,
+                                      size: 22,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Material(
-                            color: colors.danger,
-                            borderRadius: BorderRadius.circular(14),
-                            child: InkWell(
-                              onTap: _showLogoutDialog,
-                              borderRadius: BorderRadius.circular(14),
-                              child: const SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: Icon(
-                                  Icons.logout_rounded,
-                                  color: Colors.white,
-                                  size: 22,
+                              const SizedBox(width: 8),
+                              Material(
+                                color: colors.danger,
+                                borderRadius: BorderRadius.circular(14),
+                                child: InkWell(
+                                  onTap: _showLogoutDialog,
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: const SizedBox(
+                                    width: 44,
+                                    height: 44,
+                                    child: Icon(
+                                      Icons.logout_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-          body: Stack(
-            children: [
-              Row(
+              body: Stack(
                 children: [
-                  if (isDesktop)
-                    _DesktopSidebar(
+                  Row(
+                    children: [
+                      if (isDesktop)
+                        _DesktopSidebar(
+                          items: _items,
+                          selectedIndex: _selectedIndex,
+                          aiUnreadCount: aiUnreadCount,
+                          unpaidExpensesCount: unpaidExpensesCount,
+                          onSelect: _selectPage,
+                          onLogout: _showLogoutDialog,
+                        ),
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          switchInCurve: Curves.easeOut,
+                          switchOutCurve: Curves.easeIn,
+                          child: KeyedSubtree(
+                            key: ValueKey<int>(_selectedIndex),
+                            child: selectedItem.page,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (showSupportButton)
+                    Positioned(
+                      right: 28,
+                      bottom: 28,
+                      child: _SupportFloatingButton(
+                        onTap: _showSupportTicketDialog,
+                      ),
+                    ),
+                ],
+              ),
+              bottomNavigationBar: isDesktop
+                  ? null
+                  : _MobileBottomNav(
                       items: _items,
                       selectedIndex: _selectedIndex,
                       aiUnreadCount: aiUnreadCount,
+                      unpaidExpensesCount: unpaidExpensesCount,
                       onSelect: _selectPage,
-                      onLogout: _showLogoutDialog,
                     ),
-                  Expanded(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      child: KeyedSubtree(
-                        key: ValueKey<int>(_selectedIndex),
-                        child: selectedItem.page,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (showSupportButton)
-                Positioned(
-                  right: 28,
-                  bottom: 28,
-                  child: _SupportFloatingButton(
-                    onTap: _showSupportTicketDialog,
-                  ),
-                ),
-            ],
-          ),
-          bottomNavigationBar: isDesktop
-              ? null
-              : _MobileBottomNav(
-                  items: _items,
-                  selectedIndex: _selectedIndex,
-                  aiUnreadCount: aiUnreadCount,
-                  onSelect: _selectPage,
-                ),
+            );
+          },
         );
       },
     );
@@ -776,10 +786,7 @@ class _NavBadge extends StatelessWidget {
   final int count;
   final bool compact;
 
-  const _NavBadge({
-    required this.count,
-    this.compact = false,
-  });
+  const _NavBadge({required this.count, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -797,10 +804,7 @@ class _NavBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFDC2626),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: Colors.white,
-          width: 1.5,
-        ),
+        border: Border.all(color: Colors.white, width: 1.5),
       ),
       child: Text(
         visibleCount,
@@ -819,9 +823,7 @@ class _NavBadge extends StatelessWidget {
 class _SupportFloatingButton extends StatelessWidget {
   final VoidCallback onTap;
 
-  const _SupportFloatingButton({
-    required this.onTap,
-  });
+  const _SupportFloatingButton({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -885,6 +887,7 @@ class _DesktopSidebar extends StatelessWidget {
   final List<_AppNavItem> items;
   final int selectedIndex;
   final int aiUnreadCount;
+  final int unpaidExpensesCount;
   final ValueChanged<int> onSelect;
   final VoidCallback onLogout;
 
@@ -892,6 +895,7 @@ class _DesktopSidebar extends StatelessWidget {
     required this.items,
     required this.selectedIndex,
     required this.aiUnreadCount,
+    required this.unpaidExpensesCount,
     required this.onSelect,
     required this.onLogout,
   });
@@ -905,11 +909,7 @@ class _DesktopSidebar extends StatelessWidget {
       height: double.infinity,
       decoration: BoxDecoration(
         color: colors.card,
-        border: Border(
-          right: BorderSide(
-            color: colors.border,
-          ),
-        ),
+        border: Border(right: BorderSide(color: colors.border)),
         boxShadow: [
           if (colors.isDark)
             BoxShadow(
@@ -938,16 +938,18 @@ class _DesktopSidebar extends StatelessWidget {
                       label: item.label,
                       icon: item.icon,
                       selected: selected,
-                      badgeCount: index == 4 ? aiUnreadCount : 0,
+                      badgeCount: index == 1
+                          ? unpaidExpensesCount
+                          : index == 4
+                          ? aiUnreadCount
+                          : 0,
                       onTap: () => onSelect(index),
                     );
                   },
                 ),
               ),
               const SizedBox(height: 18),
-              _SidebarLogoutButton(
-                onLogout: onLogout,
-              ),
+              _SidebarLogoutButton(onLogout: onLogout),
             ],
           ),
         ),
@@ -1028,11 +1030,7 @@ class _SidebarItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
-              Icon(
-                icon,
-                color: foregroundColor,
-                size: 23,
-              ),
+              Icon(icon, color: foregroundColor, size: 23),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -1044,9 +1042,7 @@ class _SidebarItem extends StatelessWidget {
                 ),
               ),
               if (badgeCount > 0)
-                _NavBadge(
-                  count: badgeCount,
-                )
+                _NavBadge(count: badgeCount)
               else if (selected)
                 Container(
                   width: 8,
@@ -1067,9 +1063,7 @@ class _SidebarItem extends StatelessWidget {
 class _SidebarLogoutButton extends StatelessWidget {
   final VoidCallback onLogout;
 
-  const _SidebarLogoutButton({
-    required this.onLogout,
-  });
+  const _SidebarLogoutButton({required this.onLogout});
 
   @override
   Widget build(BuildContext context) {
@@ -1086,10 +1080,7 @@ class _SidebarLogoutButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
-              Icon(
-                Icons.logout_rounded,
-                color: colors.danger,
-              ),
+              Icon(Icons.logout_rounded, color: colors.danger),
               const SizedBox(width: 12),
               Text(
                 'Esci',
@@ -1110,12 +1101,14 @@ class _MobileBottomNav extends StatelessWidget {
   final List<_AppNavItem> items;
   final int selectedIndex;
   final int aiUnreadCount;
+  final int unpaidExpensesCount;
   final ValueChanged<int> onSelect;
 
   const _MobileBottomNav({
     required this.items,
     required this.selectedIndex,
     required this.aiUnreadCount,
+    required this.unpaidExpensesCount,
     required this.onSelect,
   });
 
@@ -1171,7 +1164,7 @@ class _MobileBottomNav extends StatelessWidget {
                     child: _MobileNavItem(
                       item: expenses,
                       selected: selectedIndex == 1,
-                      badgeCount: 0,
+                      badgeCount: unpaidExpensesCount,
                       onTap: () => onSelect(1),
                     ),
                   ),
@@ -1261,19 +1254,12 @@ class _MobileNavItem extends StatelessWidget {
                   clipBehavior: Clip.none,
                   alignment: Alignment.center,
                   children: [
-                    Icon(
-                      item.icon,
-                      color: color,
-                      size: selected ? 23 : 21,
-                    ),
+                    Icon(item.icon, color: color, size: selected ? 23 : 21),
                     if (badgeCount > 0)
                       Positioned(
                         top: -5,
                         right: -3,
-                        child: _NavBadge(
-                          count: badgeCount,
-                          compact: true,
-                        ),
+                        child: _NavBadge(count: badgeCount, compact: true),
                       ),
                   ],
                 ),
@@ -1337,10 +1323,7 @@ class _MobileDashboardButton extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: circleColor,
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: colors.scaffold,
-                    width: 5,
-                  ),
+                  border: Border.all(color: colors.scaffold, width: 5),
                   boxShadow: [
                     BoxShadow(
                       color: selected

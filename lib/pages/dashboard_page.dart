@@ -243,12 +243,33 @@ class _DashboardPageState extends State<DashboardPage> {
     return total;
   }
 
+  int _countActiveGoals(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+  ) {
+    if (snapshot == null) return 0;
+
+    int total = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      final target = _amountFrom(data['target_amount']);
+      final current = _amountFrom(data['current_amount']);
+
+      if (target > 0 && current < target) {
+        total++;
+      }
+    }
+
+    return total;
+  }
+
   List<_BankAccountDashboardItem> _bankAccountItems(
     QuerySnapshot<Map<String, dynamic>>? snapshot,
   ) {
     if (snapshot == null) return [];
 
-    return snapshot.docs.map((doc) {
+    final items = snapshot.docs.map((doc) {
       final data = doc.data();
 
       return _BankAccountDashboardItem(
@@ -257,6 +278,14 @@ class _DashboardPageState extends State<DashboardPage> {
         balance: _amountFrom(data['balance']),
       );
     }).toList();
+
+    items.sort(
+      (a, b) => a.name.toLowerCase().compareTo(
+            b.name.toLowerCase(),
+          ),
+    );
+
+    return items;
   }
 
   List<_MonthlySummaryItem> _monthlySummaries(
@@ -535,7 +564,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                           previousMonthExpenses) *
                                       100;
 
-                          final activeGoals = goalsDocs?.docs.length ?? 0;
+                          final activeGoals = _countActiveGoals(goalsDocs);
 
                           final expenseCountCurrentMonth =
                               _countMonthlyExpenses(
@@ -589,15 +618,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                         ),
                                         SizedBox(height: isMobile ? 18 : 24),
                                         if (isLoading)
-                                          Center(
-                                            child: Padding(
-                                              padding: const EdgeInsets.all(24),
-                                              child:
-                                                  CircularProgressIndicator(
-                                                color: colors.primary,
-                                              ),
-                                            ),
-                                          ),
+                                          const _DashboardLoadingCard(),
                                         _MonthlyInsightCard(
                                           currentMonthLabel: _monthFormatter
                                               .format(currentMonth),
@@ -2491,6 +2512,44 @@ class _ListRow extends StatelessWidget {
   }
 }
 
+class _DashboardLoadingCard extends StatelessWidget {
+  const _DashboardLoadingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      margin: const EdgeInsets.only(bottom: 22),
+      decoration: _dashboardCardDecoration(context),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.4,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              'Sto aggiornando la tua situazione finanziaria...',
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
   final String text;
 
@@ -2607,19 +2666,32 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
 
     setState(() => _loading = true);
 
-    final amount = double.parse(
-      _amountController.text.replaceAll(',', '.'),
-    );
+    try {
+      final amount = _parseDashboardAmount(_amountController.text);
 
-    await widget.financeService.addIncome(
-      title: _titleController.text.trim(),
-      amount: amount,
-      date: _selectedDate,
-      bankAccountId: _selectedBankAccountId,
-      bankAccountName: _selectedBankAccountName(),
-    );
+      await widget.financeService.addIncome(
+        title: _titleController.text.trim(),
+        amount: amount,
+        date: _selectedDate,
+        bankAccountId: _selectedBankAccountId,
+        bankAccountName: _selectedBankAccountName(),
+      );
 
-    if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+
+      _showDashboardError(
+        context,
+        'Non sono riuscito a salvare l’entrata. Riprova tra poco.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   @override
@@ -2642,6 +2714,7 @@ class _AddIncomeDialogState extends State<_AddIncomeDialog> {
               controller: _amountController,
               label: 'Importo',
               validatorText: 'Inserisci l’importo',
+              allowZero: false,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -2802,22 +2875,35 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
 
     setState(() => _loading = true);
 
-    final amount = double.parse(
-      _amountController.text.replaceAll(',', '.'),
-    );
+    try {
+      final amount = _parseDashboardAmount(_amountController.text);
 
-    await widget.financeService.addExpense(
-      title: _titleController.text.trim(),
-      amount: amount,
-      dueDate: _isPlanned ? null : _selectedDueDate,
-      category: _categoryController.text.trim(),
-      isPaid: _isPlanned ? false : _isPaid,
-      reminderEnabled: _isPlanned ? false : _reminderEnabled,
-      type: _isPlanned ? 'planned' : 'standard',
-      month: _isPlanned ? _selectedMonth : null,
-    );
+      await widget.financeService.addExpense(
+        title: _titleController.text.trim(),
+        amount: amount,
+        dueDate: _isPlanned ? null : _selectedDueDate,
+        category: _categoryController.text.trim(),
+        isPaid: _isPlanned ? false : _isPaid,
+        reminderEnabled: _isPlanned ? false : _reminderEnabled,
+        type: _isPlanned ? 'planned' : 'standard',
+        month: _isPlanned ? _selectedMonth : null,
+      );
 
-    if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+
+      _showDashboardError(
+        context,
+        'Non sono riuscito a salvare la spesa. Riprova tra poco.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   @override
@@ -2858,6 +2944,7 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
               validatorText: _isPlanned
                   ? 'Inserisci il budget previsto'
                   : 'Inserisci l’importo',
+              allowZero: false,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -3074,22 +3161,32 @@ class _AddGoalDialogState extends State<_AddGoalDialog> {
 
     setState(() => _loading = true);
 
-    final target = double.parse(
-      _targetController.text.replaceAll(',', '.'),
-    );
+    try {
+      final target = _parseDashboardAmount(_targetController.text);
+      final current = _parseDashboardAmount(_currentController.text);
 
-    final current = double.parse(
-      _currentController.text.replaceAll(',', '.'),
-    );
+      await widget.financeService.addGoal(
+        title: _titleController.text.trim(),
+        targetAmount: target,
+        currentAmount: current,
+        deadline: _selectedDeadline,
+      );
 
-    await widget.financeService.addGoal(
-      title: _titleController.text.trim(),
-      targetAmount: target,
-      currentAmount: current,
-      deadline: _selectedDeadline,
-    );
+      if (!mounted) return;
 
-    if (mounted) Navigator.pop(context);
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+
+      _showDashboardError(
+        context,
+        'Non sono riuscito a salvare l’obiettivo. Riprova tra poco.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   @override
@@ -3112,6 +3209,7 @@ class _AddGoalDialogState extends State<_AddGoalDialog> {
               controller: _targetController,
               label: 'Importo obiettivo',
               validatorText: 'Inserisci l’importo',
+              allowZero: false,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -3293,12 +3391,14 @@ class _TextInput extends StatelessWidget {
   final String label;
   final String validatorText;
   final TextInputType? keyboardType;
+  final bool allowZero;
 
   const _TextInput({
     required this.controller,
     required this.label,
     required this.validatorText,
     this.keyboardType,
+    this.allowZero = true,
   });
 
   @override
@@ -3327,14 +3427,18 @@ class _TextInput extends StatelessWidget {
                 const TextInputType.numberWithOptions(decimal: true);
 
         if (isNumberKeyboard) {
-          final parsed = double.tryParse(value.replaceAll(',', '.'));
+          final parsed = double.tryParse(
+            value.trim().replaceAll(',', '.'),
+          );
 
           if (parsed == null) {
             return 'Inserisci un numero valido';
           }
 
-          if (parsed < 0) {
-            return 'Inserisci un importo valido';
+          if (parsed < 0 || (!allowZero && parsed == 0)) {
+            return allowZero
+                ? 'Inserisci un importo valido'
+                : 'Inserisci un importo maggiore di zero';
           }
         }
 
@@ -3515,5 +3619,36 @@ Future<DateTime?> _showDashboardDatePicker({
         child: child!,
       );
     },
+  );
+}
+
+double _parseDashboardAmount(String value) {
+  return double.parse(
+    value.trim().replaceAll(',', '.'),
+  );
+}
+
+void _showDashboardError(
+  BuildContext context,
+  String message,
+) {
+  final colors = _DashboardColors.of(context);
+
+  ScaffoldMessenger.of(context).clearSnackBars();
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: colors.isDark
+          ? const Color(0xFF7F1D1D)
+          : const Color(0xFFDC2626),
+      content: Text(
+        message,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
   );
 }
