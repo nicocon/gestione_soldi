@@ -25,6 +25,7 @@ class _AuthPageState extends State<AuthPage> {
 
   late bool _isLogin;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
 
@@ -257,6 +258,126 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _isGoogleLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _authService.signInWithGoogle();
+
+      if (!mounted) return;
+
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = 'Errore Google: ${e.toString()}';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
+  Widget _googleButton() {
+    final text = _isLogin ? 'Continua con Google' : 'Registrati con Google';
+    final disabled = _isLoading || _isGoogleLoading;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: OutlinedButton(
+        onPressed: disabled ? null : _signInWithGoogle,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: _titleColor,
+          disabledForegroundColor: _textColor.withValues(alpha: 0.55),
+          side: BorderSide(
+            color: _inputBorderColor,
+            width: 1.3,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 15.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        child: _isGoogleLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _primaryColor,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'G',
+                        style: TextStyle(
+                          color: Color(0xFF4285F4),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(text),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _dividerWithText() {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 1,
+            color: _inputBorderColor,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            'oppure',
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Container(
+            height: 1,
+            color: _inputBorderColor,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = _isLogin ? 'Accedi' : 'Registrati';
@@ -323,6 +444,13 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
+
+                    _googleButton(),
+
+                    const SizedBox(height: 18),
+                    _dividerWithText(),
+                    const SizedBox(height: 18),
+
                     if (!_isLogin) ...[
                       TextFormField(
                         controller: _nameController,
@@ -424,7 +552,8 @@ class _AuthPageState extends State<AuthPage> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : _submit,
+                        onPressed:
+                            (_isLoading || _isGoogleLoading) ? null : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _primaryColor,
                           disabledBackgroundColor:
@@ -454,7 +583,7 @@ class _AuthPageState extends State<AuthPage> {
                     ),
                     const SizedBox(height: 12),
                     TextButton(
-                      onPressed: _isLoading
+                      onPressed: (_isLoading || _isGoogleLoading)
                           ? null
                           : () {
                               setState(() {
