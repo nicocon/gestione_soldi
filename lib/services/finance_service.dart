@@ -319,6 +319,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> updateIncome({
@@ -408,6 +409,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> deleteIncome({
@@ -449,6 +451,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> addExpense({
@@ -526,6 +529,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> addRecurringMonthlyExpense({
@@ -714,6 +718,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> updateExpensePaid({
@@ -800,6 +805,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> addExpenseSplitPayment({
@@ -1042,6 +1048,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> deleteRecurringExpenseGroup({
@@ -1081,6 +1088,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> updateGoal({
@@ -1100,6 +1108,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> addGoalSaving({
@@ -1129,6 +1138,7 @@ class FinanceService {
     });
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<void> deleteGoal({
@@ -1137,6 +1147,7 @@ class FinanceService {
     await goalsRef.doc(goalId).delete();
 
     await _refreshWatchSummarySafely();
+    await _generateAiInsightsSafely();
   }
 
   Future<double> _getTotalBankBalance() async {
@@ -1726,6 +1737,187 @@ class FinanceService {
     );
   }
 
+  Future<void> generateAiInsights() async {
+    final snapshot = await getAIPlannerSnapshot();
+
+    final monthlyIncome = _toDouble(snapshot['monthly_income']);
+    final totalExpenses = _toDouble(snapshot['total_expenses']);
+    final unpaidExpenses = _toDouble(snapshot['unpaid_expenses']);
+    final availableBudget = _toDouble(snapshot['available_budget']);
+    final safetyBuffer = _toDouble(snapshot['safety_buffer']);
+    final spendableBudget = _toDouble(snapshot['spendable_budget']);
+    final topCategoryName = (snapshot['top_category_name'] ?? '').toString();
+    final topCategoryAmount = _toDouble(snapshot['top_category_amount']);
+    final mainGoal = snapshot['main_goal'];
+
+    if (monthlyIncome <= 0) return;
+
+    final insightsRef = _db.collection('users').doc(_uid).collection('ai_insights');
+
+    final now = DateTime.now();
+    final todayKey =
+        '${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}';
+
+    String safeCode(String value) {
+      return value
+          .toLowerCase()
+          .trim()
+          .replaceAll(RegExp(r'[^a-z0-9_]+'), '_')
+          .replaceAll(RegExp(r'_+'), '_')
+          .replaceAll(RegExp(r'^_|_$'), '');
+    }
+
+    Future<void> createInsight({
+      required String code,
+      required String title,
+      required String message,
+      required String type,
+      required int priority,
+    }) async {
+      final cleanedCode = safeCode(code);
+      final baseDocId = '${todayKey}_$cleanedCode';
+      final baseDocRef = insightsRef.doc(baseDocId);
+
+      final existing = await baseDocRef.get();
+
+      if (existing.exists) {
+        final existingData = existing.data() ?? {};
+        final isArchived = existingData['is_archived'] == true;
+
+        // Se il messaggio esiste ed è ancora visibile/non archiviato,
+        // non lo ricreo per evitare duplicati.
+        if (!isArchived) return;
+
+        // Se invece l'utente lo aveva già archiviato con "Ho capito",
+        // e una nuova modifica genera di nuovo lo stesso avviso,
+        // creo una nuova notifica con ID diverso.
+        final newDocId =
+            '${baseDocId}_${DateTime.now().millisecondsSinceEpoch}';
+
+        await insightsRef.doc(newDocId).set({
+          'code': cleanedCode,
+          'title': title,
+          'message': message,
+          'type': type,
+          'priority': priority,
+          'is_read': false,
+          'is_archived': false,
+          'created_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        return;
+      }
+
+      await baseDocRef.set({
+        'code': cleanedCode,
+        'title': title,
+        'message': message,
+        'type': type,
+        'priority': priority,
+        'is_read': false,
+        'is_archived': false,
+        'created_at': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+    }
+
+    final expenseRatio = totalExpenses / monthlyIncome;
+
+    if (totalExpenses > monthlyIncome) {
+      await createInsight(
+        code: 'expenses_over_income',
+        title: 'Spese sopra le entrate',
+        message:
+            'Questo mese le spese totali superano le entrate. Ti consiglio di bloccare le spese extra e controllare le uscite non urgenti.',
+        type: 'danger',
+        priority: 100,
+      );
+
+      return;
+    }
+
+    if (expenseRatio >= 0.85) {
+      await createInsight(
+        code: 'budget_almost_finished',
+        title: 'Budget quasi esaurito',
+        message:
+            'Hai già usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio rallentare con le spese fino a fine mese.',
+        type: 'warning',
+        priority: 90,
+      );
+    }
+
+    if (availableBudget <= safetyBuffer && safetyBuffer > 0) {
+      await createInsight(
+        code: 'near_safety_buffer',
+        title: 'Sei vicino al margine di sicurezza',
+        message:
+            'Hai ancora budget disponibile, ma sei vicino al margine di sicurezza. Ti consiglio prudenza con nuovi acquisti.',
+        type: 'warning',
+        priority: 80,
+      );
+    }
+
+    if (unpaidExpenses > monthlyIncome * 0.30) {
+      await createInsight(
+        code: 'many_unpaid_expenses',
+        title: 'Molte spese ancora da pagare',
+        message:
+            'Hai ancora ${_formatMoneyText(unpaidExpenses)} di spese non pagate. Prima di fare nuovi acquisti, controlla le prossime scadenze.',
+        type: 'warning',
+        priority: 85,
+      );
+    }
+
+    if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
+      final categoryRatio =
+          totalExpenses > 0 ? topCategoryAmount / totalExpenses : 0.0;
+
+      if (categoryRatio >= 0.35) {
+        await createInsight(
+          code: 'heavy_category_$topCategoryName',
+          title: 'Categoria molto pesante',
+          message:
+              'La categoria "$topCategoryName" pesa molto questo mese. Riducendola anche solo del 20%, potresti recuperare circa ${_formatMoneyText(topCategoryAmount * 0.20)}.',
+          type: 'warning',
+          priority: 75,
+        );
+      }
+    }
+
+    if (spendableBudget >= 50 && mainGoal is Map<String, dynamic>) {
+      final goalTitle = (mainGoal['title'] ?? '').toString();
+      final remainingAmount = _toDouble(mainGoal['remaining_amount']);
+
+      if (goalTitle.isNotEmpty && remainingAmount > 0) {
+        final suggestedSaving = _suggestedGoalSaving(
+          spendableBudget: spendableBudget,
+          remainingGoalAmount: remainingAmount,
+        );
+
+        await createInsight(
+          code: 'goal_saving_available',
+          title: 'Puoi mettere qualcosa da parte',
+          message:
+              'Hai un margine positivo. Potresti mettere circa ${_formatMoneyText(suggestedSaving)} sull’obiettivo "$goalTitle".',
+          type: 'success',
+          priority: 65,
+        );
+      }
+    }
+  }
+
+  Future<void> _generateAiInsightsSafely() async {
+    try {
+      await generateAiInsights();
+    } catch (error) {
+      // L'AI non deve mai bloccare il salvataggio di spese, entrate o obiettivi.
+      // Se vuoi debug temporaneo:
+      // print('Errore generateAiInsights: $error');
+    }
+  }
+
   Future<void> updateWatchSummary() async {
     final summary = await getWatchSummary();
 
@@ -1748,24 +1940,34 @@ class FinanceService {
     }
   }
 
-  List<String> _buildAIPlannerSuggestions({
-    required double monthlyIncome,
-    required double paidExpenses,
-    required double unpaidExpenses,
-    required double plannedExpenses,
-    required double availableBudget,
-    required double availableBudgetWithBank,
-    required double totalBankBalance,
-    required double safetyBuffer,
-    required double spendableBudget,
-    required double spendableBudgetWithBank,
-    required double previousTotalExpenses,
-    required double currentTotalExpenses,
-    required String topCategoryName,
-    required double topCategoryAmount,
-    required Map<String, dynamic>? mainGoal,
+List<String> _buildAIPlannerSuggestions({
+  required double monthlyIncome,
+  required double paidExpenses,
+  required double unpaidExpenses,
+  required double plannedExpenses,
+  required double availableBudget,
+  required double availableBudgetWithBank,
+  required double totalBankBalance,
+  required double safetyBuffer,
+  required double spendableBudget,
+  required double spendableBudgetWithBank,
+  required double previousTotalExpenses,
+  required double currentTotalExpenses,
+  required String topCategoryName,
+  required double topCategoryAmount,
+  required Map<String, dynamic>? mainGoal,
   }) {
     final suggestions = <String>[];
+
+    final totalExpenses = paidExpenses + unpaidExpenses + plannedExpenses;
+    final usableSpendableBudget =
+        spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
+    final expenseRatio = monthlyIncome > 0 ? totalExpenses / monthlyIncome : 0.0;
+    final unpaidRatio = monthlyIncome > 0 ? unpaidExpenses / monthlyIncome : 0.0;
+    final savingPotential = usableSpendableBudget > 0
+        ? (usableSpendableBudget * 0.35).clamp(0.0, usableSpendableBudget)
+        : 0.0;
 
     if (monthlyIncome <= 0 && totalBankBalance <= 0) {
       suggestions.add(
@@ -1775,28 +1977,44 @@ class FinanceService {
       return suggestions;
     }
 
-    if (availableBudget < 0 && totalBankBalance > 0) {
-      if (availableBudgetWithBank >= 0) {
+    if (monthlyIncome <= 0 && totalBankBalance > 0) {
+      suggestions.add(
+        'Non hai ancora registrato entrate per questo mese, però hai ${_formatMoneyText(totalBankBalance)} nei conti. Posso aiutarti a gestire la liquidità, ma per un piano mensile realistico ti consiglio di inserire anche le entrate.',
+      );
+    }
+
+    if (monthlyIncome > 0) {
+      if (availableBudget < 0 && totalBankBalance > 0) {
+        if (availableBudgetWithBank >= 0) {
+          suggestions.add(
+            'Questo mese le uscite superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}. Puoi coprire la differenza con i soldi in banca, ma stai consumando liquidità già disponibile.',
+          );
+        } else {
+          suggestions.add(
+            'Questo mese le uscite superano le entrate e anche considerando i soldi in banca il margine resta negativo. Ti consiglio di bloccare le spese extra e rimandare quelle non urgenti.',
+          );
+        }
+      } else if (availableBudget < 0) {
         suggestions.add(
-          'Questo mese le uscite superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, ma hai abbastanza liquidità in banca per coprire la differenza. Attenzione però: stai consumando soldi già disponibili.',
+          'Questo mese le uscite superano le entrate. Prima di fare nuove spese, prova a ridurre o rimandare quelle non urgenti.',
+        );
+      } else if (expenseRatio >= 0.90) {
+        suggestions.add(
+          'Hai già impegnato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. È una situazione delicata: meglio evitare spese non essenziali fino a fine mese.',
+        );
+      } else if (expenseRatio >= 0.75) {
+        suggestions.add(
+          'Le spese stanno salendo: hai usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate. Sei ancora in tempo per mantenere un buon margine.',
+        );
+      } else if (availableBudget <= safetyBuffer && safetyBuffer > 0) {
+        suggestions.add(
+          'Hai ancora budget disponibile, ma sei vicino al margine di sicurezza. Ti consiglio di evitare spese extra non necessarie.',
         );
       } else {
         suggestions.add(
-          'Questo mese le uscite superano le entrate e anche considerando i soldi in banca il margine resta negativo. Prima di fare nuove spese, prova a ridurre o rimandare quelle non urgenti.',
+          'La situazione del mese è sotto controllo. Puoi gestire le prossime spese mantenendo comunque un margine di sicurezza.',
         );
       }
-    } else if (availableBudget < 0) {
-      suggestions.add(
-        'Questo mese le uscite superano le entrate. Prima di fare nuove spese, prova a ridurre o rimandare quelle non urgenti.',
-      );
-    } else if (availableBudget <= safetyBuffer) {
-      suggestions.add(
-        'Hai ancora budget disponibile, ma sei vicino al margine di sicurezza. Ti consiglio di evitare spese extra non necessarie.',
-      );
-    } else {
-      suggestions.add(
-        'La situazione del mese è sotto controllo. Puoi gestire le prossime spese mantenendo comunque un margine di sicurezza.',
-      );
     }
 
     if (totalBankBalance > 0) {
@@ -1806,60 +2024,100 @@ class FinanceService {
     }
 
     if (unpaidExpenses > 0) {
-      suggestions.add(
-        'Hai ancora spese da pagare. Prima di destinare soldi agli obiettivi, controlla quelle in scadenza.',
-      );
+      if (unpaidRatio >= 0.30) {
+        suggestions.add(
+          'Hai ancora ${_formatMoneyText(unpaidExpenses)} di spese da pagare. Prima di destinare soldi agli obiettivi, ti conviene dare priorità a queste scadenze.',
+        );
+      } else {
+        suggestions.add(
+          'Hai ancora spese da pagare per ${_formatMoneyText(unpaidExpenses)}. Considerale come soldi già impegnati prima di fare nuovi acquisti.',
+        );
+      }
     }
 
     if (plannedExpenses > 0) {
       suggestions.add(
-        'Hai spese pianificate questo mese. Considerale come soldi già impegnati, anche se non sono ancora uscite reali.',
+        'Hai ${_formatMoneyText(plannedExpenses)} di spese pianificate questo mese. Anche se non sono ancora uscite reali, è meglio trattarle come budget già occupato.',
+      );
+    }
+
+    if (savingPotential >= 10 && availableBudget > safetyBuffer) {
+      suggestions.add(
+        'Hai un margine positivo: potresti mettere da parte circa ${_formatMoneyText(savingPotential)} questo mese senza usare tutto il budget libero.',
       );
     }
 
     if (previousTotalExpenses > 0 &&
         currentTotalExpenses > previousTotalExpenses) {
       final difference = currentTotalExpenses - previousTotalExpenses;
+      final ratio = difference / previousTotalExpenses;
 
-      suggestions.add(
-        'Questo mese stai spendendo più del mese scorso di circa ${_formatMoneyText(difference)}. Tieni d’occhio le categorie più pesanti.',
-      );
+      if (ratio >= 0.20) {
+        suggestions.add(
+          'Questo mese stai spendendo circa ${_formatMoneyText(difference)} in più rispetto al mese scorso. Ti consiglio di controllare subito le categorie più pesanti.',
+        );
+      } else {
+        suggestions.add(
+          'Questo mese stai spendendo circa ${_formatMoneyText(difference)} in più rispetto al mese scorso. Tieni d’occhio le uscite nei prossimi giorni.',
+        );
+      }
     } else if (previousTotalExpenses > 0 &&
         currentTotalExpenses < previousTotalExpenses) {
       final difference = previousTotalExpenses - currentTotalExpenses;
 
       suggestions.add(
-        'Rispetto al mese scorso stai spendendo circa ${_formatMoneyText(difference)} in meno. Ottimo segnale.',
+        'Rispetto al mese scorso stai spendendo circa ${_formatMoneyText(difference)} in meno. Ottimo segnale: potresti trasformare parte di questo margine in risparmio.',
       );
     }
 
     if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
-      suggestions.add(
-        'La categoria che pesa di più questo mese è "$topCategoryName" con ${_formatMoneyText(topCategoryAmount)}.',
-      );
+      final categoryRatio =
+          currentTotalExpenses > 0 ? topCategoryAmount / currentTotalExpenses : 0.0;
+
+      if (categoryRatio >= 0.35) {
+        final possibleSaving = topCategoryAmount * 0.20;
+
+        suggestions.add(
+          'La categoria "$topCategoryName" pesa molto questo mese: ${_formatMoneyText(topCategoryAmount)}. Riducendola del 20%, potresti liberare circa ${_formatMoneyText(possibleSaving)}.',
+        );
+      } else {
+        suggestions.add(
+          'La categoria che pesa di più questo mese è "$topCategoryName" con ${_formatMoneyText(topCategoryAmount)}.',
+        );
+      }
     }
 
     if (mainGoal != null) {
       final goalTitle = (mainGoal['title'] ?? '').toString();
       final remainingAmount = _toDouble(mainGoal['remaining_amount']);
+      final progress = _toDouble(mainGoal['progress']);
       final daysRemaining = mainGoal['days_remaining'];
 
       if (goalTitle.isNotEmpty && remainingAmount > 0) {
-        final usableGoalBudget =
-            spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
-
-        if (usableGoalBudget > 0) {
+        if (usableSpendableBudget > 0) {
           final suggestedSaving = _suggestedGoalSaving(
-            spendableBudget: usableGoalBudget,
+            spendableBudget: usableSpendableBudget,
             remainingGoalAmount: remainingAmount,
           );
 
-          suggestions.add(
-            'Per l’obiettivo "$goalTitle", potresti mettere da parte circa ${_formatMoneyText(suggestedSaving)} questo mese senza toccare troppo il margine di sicurezza.',
-          );
+          if (remainingAmount <= usableSpendableBudget) {
+            suggestions.add(
+              'L’obiettivo "$goalTitle" è raggiungibile: ti mancano ${_formatMoneyText(remainingAmount)} e il tuo margine attuale potrebbe coprirlo.',
+            );
+          } else {
+            suggestions.add(
+              'Per l’obiettivo "$goalTitle", potresti mettere da parte circa ${_formatMoneyText(suggestedSaving)} questo mese senza toccare troppo il margine di sicurezza.',
+            );
+          }
         } else {
           suggestions.add(
             'Hai un obiettivo attivo, "$goalTitle", ma per ora non ti consiglio di aggiungere soldi finché non aumenta il margine disponibile.',
+          );
+        }
+
+        if (progress >= 70) {
+          suggestions.add(
+            'Sei già al ${progress.toStringAsFixed(0)}% dell’obiettivo "$goalTitle". Ti manca poco: prova a proteggerlo dalle spese extra.',
           );
         }
 
@@ -1871,7 +2129,13 @@ class FinanceService {
       }
     }
 
-    return suggestions;
+    if (suggestions.isEmpty) {
+      suggestions.add(
+        'Aggiungi entrate, spese e obiettivi per ricevere consigli più precisi dal tuo AI Planner.',
+      );
+    }
+
+    return suggestions.take(8).toList();
   }
 
   int _calculateFinancialHealthScore({
@@ -1960,11 +2224,170 @@ class FinanceService {
     return 'Critica';
   }
 
+  String _normalizeAIQuestion(String value) {
+  var text = value.toLowerCase().trim();
+
+  const replacements = {
+    'à': 'a',
+    'è': 'e',
+    'é': 'e',
+    'ì': 'i',
+    'ò': 'o',
+    'ù': 'u',
+  };
+
+  replacements.forEach((from, to) {
+    text = text.replaceAll(from, to);
+  });
+
+  text = text.replaceAll(RegExp(r'\s+'), ' ');
+
+  return text;
+}
+
+bool _questionContainsAny(String text, List<String> words) {
+  return words.any(text.contains);
+}
+
+String _goalAdviceText({
+  required Map<String, dynamic>? mainGoal,
+  required double spendableBudget,
+  required double spendableBudgetWithBank,
+}) {
+  if (mainGoal is! Map<String, dynamic>) {
+    final realSpendableBudget =
+        spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
+    if (realSpendableBudget <= 0) {
+      return 'Al momento non vedo un margine adatto per risparmiare. Prima sistemerei le spese del mese.';
+    }
+
+    return 'Non vedo un obiettivo principale attivo. Però potresti mettere da parte circa ${_formatMoneyText(realSpendableBudget * 0.35)} questo mese.';
+  }
+
+  final goalTitle = (mainGoal['title'] ?? '').toString();
+  final remainingAmount = _toDouble(mainGoal['remaining_amount']);
+  final progress = _toDouble(mainGoal['progress']);
+  final daysRemaining = mainGoal['days_remaining'];
+
+  final realSpendableBudget =
+      spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
+
+  if (goalTitle.isEmpty) {
+    return 'Hai un obiettivo attivo, ma non riesco a leggere bene il nome. Controlla i dati dell’obiettivo.';
+  }
+
+  if (remainingAmount <= 0) {
+    return 'L’obiettivo "$goalTitle" sembra già completato. Ottimo lavoro!';
+  }
+
+  if (realSpendableBudget <= 0) {
+    return 'Hai l’obiettivo "$goalTitle", ma questo mese il margine disponibile è basso. Ti consiglio di proteggere prima le spese essenziali e riprendere il risparmio appena il budget migliora.';
+  }
+
+  final suggestedSaving = _suggestedGoalSaving(
+    spendableBudget: realSpendableBudget,
+    remainingGoalAmount: remainingAmount,
+  );
+
+  final buffer = StringBuffer();
+
+  if (remainingAmount <= realSpendableBudget) {
+    buffer.write(
+      'L’obiettivo "$goalTitle" è molto vicino: ti mancano ${_formatMoneyText(remainingAmount)} e il tuo margine attuale potrebbe coprirlo. ',
+    );
+  } else {
+    buffer.write(
+      'Per l’obiettivo "$goalTitle", ti consiglierei di mettere da parte circa ${_formatMoneyText(suggestedSaving)} questo mese. ',
+    );
+  }
+
+  buffer.write(
+    'Sei al ${progress.toStringAsFixed(0)}% e mancano ${_formatMoneyText(remainingAmount)}.',
+  );
+
+  if (daysRemaining is int) {
+    if (daysRemaining < 0) {
+      buffer.write(' La scadenza risulta superata: valuta se aggiornarla.');
+    } else if (daysRemaining == 0) {
+      buffer.write(' La scadenza è oggi.');
+    } else if (daysRemaining <= 30) {
+      buffer.write(' Mancano circa $daysRemaining giorni, quindi conviene dargli priorità.');
+    }
+  }
+
+  return buffer.toString();
+}
+
+String _expenseControlAdvice({
+  required double monthlyIncome,
+  required double totalExpenses,
+  required double previousTotalExpenses,
+  required String topCategoryName,
+  required double topCategoryAmount,
+}) {
+  if (totalExpenses <= 0) {
+    return 'Al momento non vedo spese registrate per questo mese. Quando aggiungi le uscite, posso dirti quali categorie controllare.';
+  }
+
+  final expenseRatio = monthlyIncome > 0 ? totalExpenses / monthlyIncome : 0.0;
+  final buffer = StringBuffer();
+
+  buffer.write(
+    'Questo mese hai uscite totali per ${_formatMoneyText(totalExpenses)}.',
+  );
+
+  if (monthlyIncome > 0) {
+    buffer.write(
+      ' Sono circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili.',
+    );
+
+    if (expenseRatio >= 0.90) {
+      buffer.write(
+        ' È una percentuale alta: ti consiglio di bloccare le spese non essenziali.',
+      );
+    } else if (expenseRatio >= 0.75) {
+      buffer.write(
+        ' Sei in una fascia da controllare: meglio ridurre gli acquisti extra.',
+      );
+    } else {
+      buffer.write(
+        ' La situazione è ancora gestibile.',
+      );
+    }
+  }
+
+  if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
+    final possibleSaving = topCategoryAmount * 0.20;
+
+    buffer.write(
+      ' La categoria più pesante è "$topCategoryName" con ${_formatMoneyText(topCategoryAmount)}.',
+    );
+
+    if (possibleSaving >= 5) {
+      buffer.write(
+        ' Riducendola del 20%, potresti liberare circa ${_formatMoneyText(possibleSaving)}.',
+      );
+    }
+  }
+
+  if (previousTotalExpenses > 0) {
+    buffer.write(
+      ' ${currentVsPreviousSentence(
+        currentTotalExpenses: totalExpenses,
+        previousTotalExpenses: previousTotalExpenses,
+      )}',
+    );
+  }
+
+  return buffer.toString();
+}
+
   String _buildLocalAIPlannerAnswer({
     required String question,
     required Map<String, dynamic> snapshot,
   }) {
-    final lowerQuestion = question.toLowerCase();
+    final lowerQuestion = _normalizeAIQuestion(question);
 
     final monthlyIncome = _toDouble(snapshot['monthly_income']);
     final paidExpenses = _toDouble(snapshot['paid_expenses']);
@@ -1989,36 +2412,105 @@ class FinanceService {
     final score = snapshot['financial_health_score'];
     final mainGoal = snapshot['main_goal'];
 
-    final askedAboutAffordability = lowerQuestion.contains('posso') ||
-        lowerQuestion.contains('permettermi') ||
-        lowerQuestion.contains('comprare') ||
-        lowerQuestion.contains('spendere') ||
-        lowerQuestion.contains('acquistare');
-
-    final askedAboutSaving = lowerQuestion.contains('risparmiare') ||
-        lowerQuestion.contains('mettere da parte') ||
-        lowerQuestion.contains('accantonare') ||
-        lowerQuestion.contains('obiettivo') ||
-        lowerQuestion.contains('obiettivi');
-
-    final askedAboutSituation = lowerQuestion.contains('come sto') ||
-        lowerQuestion.contains('situazione') ||
-        lowerQuestion.contains('andamento') ||
-        lowerQuestion.contains('budget') ||
-        lowerQuestion.contains('mese');
-
-    final askedAboutExpenses = lowerQuestion.contains('spese') ||
-        lowerQuestion.contains('spendendo') ||
-        lowerQuestion.contains('categoria') ||
-        lowerQuestion.contains('uscite');
-
-    final askedAboutBank = lowerQuestion.contains('banca') ||
-        lowerQuestion.contains('conto') ||
-        lowerQuestion.contains('conti') ||
-        lowerQuestion.contains('saldo') ||
-        lowerQuestion.contains('liquidità');
-
     final amountInQuestion = _extractFirstAmountFromText(lowerQuestion);
+
+    final askedAboutAffordability = _questionContainsAny(lowerQuestion, [
+      'posso',
+      'permettermi',
+      'comprare',
+      'spendere',
+      'acquistare',
+      'prendere',
+      'pagare',
+      'posso comprare',
+      'posso spendere',
+      'me lo posso permettere',
+    ]);
+
+    final askedAboutSaving = _questionContainsAny(lowerQuestion, [
+      'risparmiare',
+      'mettere da parte',
+      'accantonare',
+      'salvare soldi',
+      'quanto posso risparmiare',
+      'quanto mettere da parte',
+    ]);
+
+    final askedAboutGoals = _questionContainsAny(lowerQuestion, [
+      'obiettivo',
+      'obiettivi',
+      'target',
+      'raggiungere',
+      'scadenza',
+      'manca',
+      'mancano',
+    ]);
+
+    final askedAboutSituation = _questionContainsAny(lowerQuestion, [
+      'come sto',
+      'situazione',
+      'andamento',
+      'budget',
+      'mese',
+      'come va',
+      'sto andando',
+      'analisi',
+      'riepilogo',
+    ]);
+
+    final askedAboutExpenses = _questionContainsAny(lowerQuestion, [
+      'spese',
+      'spendendo',
+      'categoria',
+      'categorie',
+      'uscite',
+      'sto spendendo troppo',
+      'dove sto spendendo',
+      'controllare',
+      'tagliare',
+      'ridurre',
+    ]);
+
+    final askedAboutBank = _questionContainsAny(lowerQuestion, [
+      'banca',
+      'conto',
+      'conti',
+      'saldo',
+      'liquidita',
+      'liquidità',
+      'soldi in banca',
+    ]);
+
+    final askedAboutDailyBudget = _questionContainsAny(lowerQuestion, [
+      'al giorno',
+      'giornaliero',
+      'ogni giorno',
+      'quanto al giorno',
+      'giorno',
+    ]);
+
+    final askedAboutDanger = _questionContainsAny(lowerQuestion, [
+      'rischio',
+      'problema',
+      'critica',
+      'attenzione',
+      'male',
+      'preoccupare',
+      'sforare',
+      'rosso',
+      'cosa posso fare',
+      'cosa devo fare',
+      'che posso fare',
+      'come posso migliorare',
+      'migliorare',
+      'sistemare',
+      'come risolvo',
+      'come posso sistemare',
+      'che mi consigli',
+      'cosa mi consigli',
+      'consiglio',
+      'consigli',
+    ]);
 
     if (monthlyIncome <= 0 && totalBankBalance <= 0) {
       return 'Per risponderti bene ho bisogno che tu inserisca almeno un’entrata o un conto bancario con il saldo disponibile. Al momento non vedo soldi registrati, quindi non posso calcolare un budget realistico.';
@@ -2030,10 +2522,28 @@ class FinanceService {
       }
 
       if (availableBudget < 0 && availableBudgetWithBank >= 0) {
-        return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Questo mese le spese superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, però la liquidità in banca riesce a coprire la differenza. Dopo le spese previste, il margine stimato considerando la banca è ${_formatMoneyText(availableBudgetWithBank)}.';
+        return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Questo mese le spese superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, però la liquidità in banca riesce a coprire la differenza. Dopo le spese previste, il margine stimato considerando la banca è ${_formatMoneyText(availableBudgetWithBank)}. Ti consiglio comunque di fare attenzione, perché stai usando soldi già disponibili e non margine generato dal mese.';
+      }
+
+      if (availableBudgetWithBank < 0) {
+        return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}, ma considerando tutte le spese del mese il margine stimato resta negativo: ${_formatMoneyText(availableBudgetWithBank)}. Meglio non fare nuove spese extra.';
       }
 
       return 'Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Considerando le spese del mese, il margine stimato con la banca è ${_formatMoneyText(availableBudgetWithBank)}.';
+    }
+
+    if (askedAboutDailyBudget) {
+      final daily = dailyAvailable > 0 ? dailyAvailable : dailyAvailableWithBank;
+
+      if (daily <= 0) {
+        return 'Al momento non hai un margine giornaliero positivo. Per arrivare meglio a fine mese, ti consiglierei di evitare spese extra e controllare prima quelle ancora da pagare.';
+      }
+
+      if (daily < 10) {
+        return 'Puoi considerare circa ${_formatMoneyText(daily)} al giorno, ma è un margine basso. Ti consiglio di usarlo solo per spese davvero necessarie.';
+      }
+
+      return 'Per il resto del mese puoi considerare circa ${_formatMoneyText(daily)} al giorno. Cerca comunque di non usarlo tutto, così mantieni un margine per imprevisti.';
     }
 
     if (askedAboutAffordability) {
@@ -2041,84 +2551,106 @@ class FinanceService {
           spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
 
       if (amountInQuestion != null && amountInQuestion > 0) {
-        final double remainingAfterPurchase =
-            availableBudgetWithBank - amountInQuestion;
-
-        final double remainingAfterSafety =
-            remainingAfterPurchase - safetyBuffer;
+        final remainingAfterPurchase = availableBudgetWithBank - amountInQuestion;
+        final remainingAfterSafety = remainingAfterPurchase - safetyBuffer;
 
         if (remainingAfterPurchase < 0) {
           return 'Guardando i tuoi dati, non te lo consiglio. Considerando anche i soldi in banca hai un margine stimato di ${_formatMoneyText(availableBudgetWithBank)}, ma questa spesa sarebbe di ${_formatMoneyText(amountInQuestion)}. Andresti sotto di circa ${_formatMoneyText(remainingAfterPurchase.abs())}.';
         }
 
         if (availableBudget < 0 && availableBudgetWithBank >= 0) {
-          return 'Puoi coprirla solo usando i soldi già presenti in banca. Le entrate del mese non bastano, perché il budget mensile è negativo di circa ${_formatMoneyText(availableBudget.abs())}. Dopo una spesa da ${_formatMoneyText(amountInQuestion)}, considerando la banca, ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}.';
+          return 'Puoi coprirla solo usando i soldi già presenti in banca. Le entrate del mese non bastano, perché il budget mensile è negativo di circa ${_formatMoneyText(availableBudget.abs())}. Dopo una spesa da ${_formatMoneyText(amountInQuestion)}, considerando la banca, ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}. Io lo farei solo se è una spesa importante.';
         }
 
         if (remainingAfterSafety < 0) {
           return 'Tecnicamente puoi farlo, perché considerando anche la banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili. Però dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero ${_formatMoneyText(remainingAfterPurchase)}, andando sotto il margine di sicurezza consigliato di ${_formatMoneyText(safetyBuffer)}. Io ti direi: fallo solo se è davvero necessario.';
         }
 
-        return 'Sì, puoi permettertelo. Considerando anche i soldi in banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}.';
+        return 'Sì, puoi permettertelo. Considerando anche i soldi in banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}. Se vuoi essere prudente, evita comunque di fare troppe spese simili nello stesso mese.';
       }
 
       if (realSpendableBudget <= 0) {
-        return 'In questo momento non ti consiglio nuove spese extra. Considerando anche la banca, il margine realmente spendibile è basso perché sarebbe meglio tenere circa ${_formatMoneyText(safetyBuffer)} come sicurezza.';
+        return 'In questo momento non ti consiglio nuove spese extra. Considerando entrate, spese e banca, il margine realmente spendibile è basso perché sarebbe meglio tenere circa ${_formatMoneyText(safetyBuffer)} come sicurezza.';
       }
 
       return 'In questo momento puoi spendere circa ${_formatMoneyText(realSpendableBudget)} senza intaccare troppo il margine di sicurezza. Questa stima considera anche i soldi presenti in banca.';
     }
 
-    if (askedAboutSaving) {
-      final realSpendableBudget =
-          spendableBudget > 0 ? spendableBudget : spendableBudgetWithBank;
-
-      if (realSpendableBudget <= 0) {
-        return 'Per ora non ti consiglio di mettere soldi da parte: considerando entrate, spese e soldi in banca, il margine è basso. Prima sistemerei le spese del mese.';
-      }
-
-      if (mainGoal is Map<String, dynamic>) {
-        final goalTitle = (mainGoal['title'] ?? '').toString();
-        final remainingAmount = _toDouble(mainGoal['remaining_amount']);
-        final suggestedSaving = _suggestedGoalSaving(
-          spendableBudget: realSpendableBudget,
-          remainingGoalAmount: remainingAmount,
-        );
-
-        if (goalTitle.isNotEmpty) {
-          return 'Secondo me questo mese puoi mettere da parte circa ${_formatMoneyText(suggestedSaving)} per "$goalTitle". Ho considerato sia il budget del mese sia i soldi disponibili in banca.';
-        }
-      }
-
-      final double suggestedSaving = realSpendableBudget * 0.50;
-
-      return 'Questo mese puoi provare a mettere da parte circa ${_formatMoneyText(suggestedSaving)}. È una cifra prudente perché lascia comunque un margine per eventuali imprevisti.';
+    if (askedAboutSaving || askedAboutGoals) {
+      return _goalAdviceText(
+        mainGoal: mainGoal is Map<String, dynamic> ? mainGoal : null,
+        spendableBudget: spendableBudget,
+        spendableBudgetWithBank: spendableBudgetWithBank,
+      );
     }
 
     if (askedAboutExpenses) {
-      if (topCategoryName.isEmpty || topCategoryAmount <= 0) {
-        return 'Al momento non vedo una categoria dominante nelle spese di questo mese. Appena aggiungi più movimenti, potrò dirti dove stai spendendo di più.';
+      return _expenseControlAdvice(
+        monthlyIncome: monthlyIncome,
+        totalExpenses: totalExpenses,
+        previousTotalExpenses: previousTotalExpenses,
+        topCategoryName: topCategoryName,
+        topCategoryAmount: topCategoryAmount,
+      );
+    }
+
+    if (askedAboutDanger) {
+      if (availableBudgetWithBank < 0) {
+        return 'Per migliorare la situazione ti consiglio di fare 3 cose subito: blocca le spese extra, controlla le spese non ancora pagate e prova a rimandare quelle non urgenti. Anche considerando la banca, il margine stimato è negativo di ${_formatMoneyText(availableBudgetWithBank.abs())}, quindi ora la priorità è ridurre le uscite.';
       }
 
-      final comparisonText = previousTotalExpenses > 0
-          ? currentVsPreviousSentence(
-              currentTotalExpenses: totalExpenses,
-              previousTotalExpenses: previousTotalExpenses,
-            )
-          : '';
+      if (availableBudget < 0 && availableBudgetWithBank >= 0) {
+        return 'Puoi migliorare così: prima controlla le spese non pagate, poi evita nuovi acquisti non necessari e usa i soldi in banca solo per coprire le uscite importanti. Le spese superano le entrate di circa ${_formatMoneyText(availableBudget.abs())}, quindi il mese non sta generando margine positivo.';
+      }
 
-      return 'La categoria che pesa di più questo mese è "$topCategoryName", con ${_formatMoneyText(topCategoryAmount)}. Le tue spese totali del mese sono ${_formatMoneyText(totalExpenses)}. $comparisonText';
+      if (availableBudget <= safetyBuffer && safetyBuffer > 0) {
+        return 'La situazione non è critica, però sei vicino al margine di sicurezza. Ti consiglio di rallentare con le spese extra, dare priorità alle scadenze e rimandare gli acquisti non urgenti fino al prossimo mese.';
+      }
+
+      if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
+        return 'Puoi migliorare partendo dalla categoria più pesante: "$topCategoryName", dove hai speso circa ${_formatMoneyText(topCategoryAmount)}. Prova a ridurla del 20%: potresti recuperare circa ${_formatMoneyText(topCategoryAmount * 0.20)}. In più, mantieni almeno ${_formatMoneyText(safetyBuffer)} come margine di sicurezza.';
+      }
+
+      return 'La situazione non sembra grave. Per migliorarla ancora, prova a mettere da parte una piccola quota del budget disponibile, evita spese impulsive e controlla ogni settimana le categorie più alte.';
     }
 
     if (askedAboutSituation) {
+      final buffer = StringBuffer();
+
+      buffer.write(
+        'La tua situazione attuale è "$mood". Hai entrate per ${_formatMoneyText(monthlyIncome)}, spese già pagate per ${_formatMoneyText(paidExpenses)}, spese ancora da pagare per ${_formatMoneyText(unpaidExpenses)} e spese pianificate per ${_formatMoneyText(plannedExpenses)}. ',
+      );
+
       if (availableBudget < 0 && availableBudgetWithBank >= 0) {
-        return 'La tua situazione attuale è "$mood". Le entrate del mese sono ${_formatMoneyText(monthlyIncome)}, mentre le uscite totali previste sono ${_formatMoneyText(totalExpenses)}. Il budget mensile è negativo di ${_formatMoneyText(availableBudget.abs())}, però hai ${_formatMoneyText(totalBankBalance)} in banca: quindi puoi coprire la differenza, ma stai usando liquidità già disponibile.';
+        buffer.write(
+          'Il budget mensile è negativo di ${_formatMoneyText(availableBudget.abs())}, però hai ${_formatMoneyText(totalBankBalance)} in banca: quindi puoi coprire la differenza, ma stai usando liquidità già disponibile. ',
+        );
+      } else if (availableBudgetWithBank < 0) {
+        buffer.write(
+          'Anche considerando la banca, il margine stimato è negativo. Ti consiglio di bloccare le spese extra. ',
+        );
+      } else {
+        buffer.write(
+          'Il budget disponibile del mese è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. ',
+        );
       }
 
-      return 'La tua situazione attuale è "$mood". Hai entrate per ${_formatMoneyText(monthlyIncome)}, spese già pagate per ${_formatMoneyText(paidExpenses)}, spese ancora da pagare per ${_formatMoneyText(unpaidExpenses)} e spese pianificate per ${_formatMoneyText(plannedExpenses)}. Il budget disponibile del mese è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}.';
+      if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
+        buffer.write(
+          'La categoria più pesante è "$topCategoryName" con ${_formatMoneyText(topCategoryAmount)}. ',
+        );
+      }
+
+      if (score is int) {
+        buffer.write('Il punteggio AI è $score/100.');
+      }
+
+      return buffer.toString();
     }
 
-    return 'Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Il budget mensile stimato è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(dailyAvailableWithBank > 0 ? dailyAvailableWithBank : dailyAvailable)} al giorno per il resto del mese, mantenendo prudenza.';
+    final daily = dailyAvailableWithBank > 0 ? dailyAvailableWithBank : dailyAvailable;
+
+    return 'Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Il budget mensile stimato è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(daily)} al giorno per il resto del mese, mantenendo prudenza.';
   }
 
   String currentVsPreviousSentence({

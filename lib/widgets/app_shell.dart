@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -18,6 +20,8 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   final AuthService _authService = AuthService();
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final GlobalKey<FormState> _ticketFormKey = GlobalKey<FormState>();
   final TextEditingController _ticketSubjectController =
@@ -70,6 +74,30 @@ class _AppShellState extends State<AppShell> {
 
   bool _isDesktop(BuildContext context) {
     return MediaQuery.of(context).size.width >= 900;
+  }
+
+  Stream<int> _aiUnreadCountStream() {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return Stream<int>.value(0);
+    }
+
+    return _db
+        .collection('users')
+        .doc(user.uid)
+        .collection('ai_insights')
+        .where('is_read', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) {
+      final visibleUnreadDocs = snapshot.docs.where((doc) {
+        final data = doc.data();
+
+        return data['is_archived'] != true;
+      }).toList();
+
+      return visibleUnreadDocs.length;
+    });
   }
 
   void _selectPage(int index) {
@@ -510,136 +538,146 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = _ShellColors.of(context);
-    final isDesktop = _isDesktop(context);
-    final showSupportButton = kIsWeb && isDesktop;
-    final selectedItem = _items[_selectedIndex];
-    final settingsSelected = _selectedIndex == 5;
+    return StreamBuilder<int>(
+      stream: _aiUnreadCountStream(),
+      initialData: 0,
+      builder: (context, aiUnreadSnapshot) {
+        final aiUnreadCount = aiUnreadSnapshot.data ?? 0;
 
-    return Scaffold(
-      backgroundColor: colors.scaffold,
-      extendBody: true,
-      appBar: isDesktop
-          ? null
-          : AppBar(
-              titleSpacing: 14,
-              title: SizedBox(
-                height: 46,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Image.asset(
-                    colors.logoAsset,
-                    width: 145,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.centerLeft,
-                    errorBuilder: (_, __, ___) {
-                      return Text(
-                        'PocketPlan',
-                        style: TextStyle(
-                          color: colors.textPrimary,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      );
-                    },
+        final colors = _ShellColors.of(context);
+        final isDesktop = _isDesktop(context);
+        final showSupportButton = kIsWeb && isDesktop;
+        final selectedItem = _items[_selectedIndex];
+        final settingsSelected = _selectedIndex == 5;
+
+        return Scaffold(
+          backgroundColor: colors.scaffold,
+          extendBody: true,
+          appBar: isDesktop
+              ? null
+              : AppBar(
+                  titleSpacing: 14,
+                  title: SizedBox(
+                    height: 46,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Image.asset(
+                        colors.logoAsset,
+                        width: 145,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.centerLeft,
+                        errorBuilder: (_, __, ___) {
+                          return Text(
+                            'PocketPlan',
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              centerTitle: false,
-              backgroundColor: colors.card,
-              surfaceTintColor: colors.card,
-              elevation: 0,
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Material(
-                        color: settingsSelected
-                            ? colors.primarySoft
-                            : colors.cardSofter,
-                        borderRadius: BorderRadius.circular(14),
-                        child: InkWell(
-                          onTap: _openSettings,
-                          borderRadius: BorderRadius.circular(14),
-                          child: SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: Icon(
-                              Icons.settings_rounded,
-                              color: settingsSelected
-                                  ? colors.primary
-                                  : colors.textMuted,
-                              size: 22,
+                  centerTitle: false,
+                  backgroundColor: colors.card,
+                  surfaceTintColor: colors.card,
+                  elevation: 0,
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Material(
+                            color: settingsSelected
+                                ? colors.primarySoft
+                                : colors.cardSofter,
+                            borderRadius: BorderRadius.circular(14),
+                            child: InkWell(
+                              onTap: _openSettings,
+                              borderRadius: BorderRadius.circular(14),
+                              child: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: Icon(
+                                  Icons.settings_rounded,
+                                  color: settingsSelected
+                                      ? colors.primary
+                                      : colors.textMuted,
+                                  size: 22,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Material(
-                        color: colors.danger,
-                        borderRadius: BorderRadius.circular(14),
-                        child: InkWell(
-                          onTap: _showLogoutDialog,
-                          borderRadius: BorderRadius.circular(14),
-                          child: const SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: Icon(
-                              Icons.logout_rounded,
-                              color: Colors.white,
-                              size: 22,
+                          const SizedBox(width: 8),
+                          Material(
+                            color: colors.danger,
+                            borderRadius: BorderRadius.circular(14),
+                            child: InkWell(
+                              onTap: _showLogoutDialog,
+                              borderRadius: BorderRadius.circular(14),
+                              child: const SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: Icon(
+                                  Icons.logout_rounded,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-      body: Stack(
-        children: [
-          Row(
+          body: Stack(
             children: [
-              if (isDesktop)
-                _DesktopSidebar(
-                  items: _items,
-                  selectedIndex: _selectedIndex,
-                  onSelect: _selectPage,
-                  onLogout: _showLogoutDialog,
-                ),
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  child: KeyedSubtree(
-                    key: ValueKey<int>(_selectedIndex),
-                    child: selectedItem.page,
+              Row(
+                children: [
+                  if (isDesktop)
+                    _DesktopSidebar(
+                      items: _items,
+                      selectedIndex: _selectedIndex,
+                      aiUnreadCount: aiUnreadCount,
+                      onSelect: _selectPage,
+                      onLogout: _showLogoutDialog,
+                    ),
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      child: KeyedSubtree(
+                        key: ValueKey<int>(_selectedIndex),
+                        child: selectedItem.page,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (showSupportButton)
+                Positioned(
+                  right: 28,
+                  bottom: 28,
+                  child: _SupportFloatingButton(
+                    onTap: _showSupportTicketDialog,
                   ),
                 ),
-              ),
             ],
           ),
-          if (showSupportButton)
-            Positioned(
-              right: 28,
-              bottom: 28,
-              child: _SupportFloatingButton(
-                onTap: _showSupportTicketDialog,
-              ),
-            ),
-        ],
-      ),
-      bottomNavigationBar: isDesktop
-          ? null
-          : _MobileBottomNav(
-              items: _items,
-              selectedIndex: _selectedIndex,
-              onSelect: _selectPage,
-            ),
+          bottomNavigationBar: isDesktop
+              ? null
+              : _MobileBottomNav(
+                  items: _items,
+                  selectedIndex: _selectedIndex,
+                  aiUnreadCount: aiUnreadCount,
+                  onSelect: _selectPage,
+                ),
+        );
+      },
     );
   }
 }
@@ -734,6 +772,50 @@ class _AppNavItem {
   });
 }
 
+class _NavBadge extends StatelessWidget {
+  final int count;
+  final bool compact;
+
+  const _NavBadge({
+    required this.count,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleCount = count > 99 ? '99+' : count.toString();
+
+    return Container(
+      constraints: BoxConstraints(
+        minWidth: compact ? 18 : 22,
+        minHeight: compact ? 18 : 22,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 5 : 7,
+        vertical: compact ? 2 : 3,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFDC2626),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: Colors.white,
+          width: 1.5,
+        ),
+      ),
+      child: Text(
+        visibleCount,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: compact ? 9 : 10,
+          fontWeight: FontWeight.w900,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
 class _SupportFloatingButton extends StatelessWidget {
   final VoidCallback onTap;
 
@@ -802,12 +884,14 @@ class _SupportFloatingButton extends StatelessWidget {
 class _DesktopSidebar extends StatelessWidget {
   final List<_AppNavItem> items;
   final int selectedIndex;
+  final int aiUnreadCount;
   final ValueChanged<int> onSelect;
   final VoidCallback onLogout;
 
   const _DesktopSidebar({
     required this.items,
     required this.selectedIndex,
+    required this.aiUnreadCount,
     required this.onSelect,
     required this.onLogout,
   });
@@ -854,6 +938,7 @@ class _DesktopSidebar extends StatelessWidget {
                       label: item.label,
                       icon: item.icon,
                       selected: selected,
+                      badgeCount: index == 4 ? aiUnreadCount : 0,
                       onTap: () => onSelect(index),
                     );
                   },
@@ -914,12 +999,14 @@ class _SidebarItem extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
+  final int badgeCount;
   final VoidCallback onTap;
 
   const _SidebarItem({
     required this.label,
     required this.icon,
     required this.selected,
+    required this.badgeCount,
     required this.onTap,
   });
 
@@ -956,7 +1043,11 @@ class _SidebarItem extends StatelessWidget {
                   ),
                 ),
               ),
-              if (selected)
+              if (badgeCount > 0)
+                _NavBadge(
+                  count: badgeCount,
+                )
+              else if (selected)
                 Container(
                   width: 8,
                   height: 8,
@@ -1018,11 +1109,13 @@ class _SidebarLogoutButton extends StatelessWidget {
 class _MobileBottomNav extends StatelessWidget {
   final List<_AppNavItem> items;
   final int selectedIndex;
+  final int aiUnreadCount;
   final ValueChanged<int> onSelect;
 
   const _MobileBottomNav({
     required this.items,
     required this.selectedIndex,
+    required this.aiUnreadCount,
     required this.onSelect,
   });
 
@@ -1078,6 +1171,7 @@ class _MobileBottomNav extends StatelessWidget {
                     child: _MobileNavItem(
                       item: expenses,
                       selected: selectedIndex == 1,
+                      badgeCount: 0,
                       onTap: () => onSelect(1),
                     ),
                   ),
@@ -1085,6 +1179,7 @@ class _MobileBottomNav extends StatelessWidget {
                     child: _MobileNavItem(
                       item: incomes,
                       selected: selectedIndex == 2,
+                      badgeCount: 0,
                       onTap: () => onSelect(2),
                     ),
                   ),
@@ -1093,6 +1188,7 @@ class _MobileBottomNav extends StatelessWidget {
                     child: _MobileNavItem(
                       item: goals,
                       selected: selectedIndex == 3,
+                      badgeCount: 0,
                       onTap: () => onSelect(3),
                     ),
                   ),
@@ -1100,6 +1196,7 @@ class _MobileBottomNav extends StatelessWidget {
                     child: _MobileNavItem(
                       item: aiPlanner,
                       selected: selectedIndex == 4,
+                      badgeCount: aiUnreadCount,
                       onTap: () => onSelect(4),
                     ),
                   ),
@@ -1124,11 +1221,13 @@ class _MobileBottomNav extends StatelessWidget {
 class _MobileNavItem extends StatelessWidget {
   final _AppNavItem item;
   final bool selected;
+  final int badgeCount;
   final VoidCallback onTap;
 
   const _MobileNavItem({
     required this.item,
     required this.selected,
+    required this.badgeCount,
     required this.onTap,
   });
 
@@ -1155,10 +1254,29 @@ class _MobileNavItem extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                item.icon,
-                color: color,
-                size: selected ? 23 : 21,
+              SizedBox(
+                width: 34,
+                height: 25,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(
+                      item.icon,
+                      color: color,
+                      size: selected ? 23 : 21,
+                    ),
+                    if (badgeCount > 0)
+                      Positioned(
+                        top: -5,
+                        right: -3,
+                        child: _NavBadge(
+                          count: badgeCount,
+                          compact: true,
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(height: 3),
               FittedBox(

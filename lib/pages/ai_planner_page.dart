@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -25,6 +26,10 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   late Future<Map<String, dynamic>> _plannerFuture;
 
   bool _isAsking = false;
+  bool _markingAiInsightsAsRead = false;
+
+  final Set<String> _chatInsightIds = {};
+  final Set<String> _activeChatInsightIds = {};
 
   final List<_AIMessage> _messages = [
     const _AIMessage(
@@ -85,6 +90,170 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     return value.whereType<Map>().map((item) {
       return Map<String, dynamic>.from(item);
     }).toList();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _aiInsightsStream() {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return const Stream.empty();
+    }
+
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('ai_insights')
+        .orderBy('created_at', descending: true)
+        .limit(20)
+        .snapshots();
+  }
+
+  DateTime? _aiInsightDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+
+    return null;
+  }
+
+    Future<void> _archiveAiInsight(String insightId) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || insightId.trim().isEmpty) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('ai_insights')
+          .doc(insightId)
+          .set(
+        {
+          'is_read': true,
+          'is_archived': true,
+          'archived_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      _activeChatInsightIds.remove(insightId);
+    } catch (_) {
+      // Non blocchiamo mai la chat per un errore di archiviazione.
+    }
+  }
+
+  Future<void> _archiveActiveChatInsights() async {
+    if (_activeChatInsightIds.isEmpty) return;
+
+    final ids = List<String>.from(_activeChatInsightIds);
+
+    for (final id in ids) {
+      await _archiveAiInsight(id);
+    }
+
+    _activeChatInsightIds.clear();
+  }
+
+  void _startNewChat() {
+    setState(() {
+      _messages
+        ..clear()
+        ..add(
+          const _AIMessage(
+            text:
+                'Ciao! Sono il tuo AI Planner. Posso aiutarti a capire quanto puoi spendere, quanto puoi risparmiare e come gestire meglio il mese.',
+            isUser: false,
+          ),
+        );
+
+      _chatInsightIds.clear();
+      _activeChatInsightIds.clear();
+      _questionController.clear();
+      _isAsking = false;
+    });
+
+    _scrollChatToBottom();
+  }
+
+  void _startChatFromInsight({
+    required String id,
+    required String title,
+    required String message,
+  }) {
+    final text = message.trim().isEmpty ? title : '$title\n\n$message';
+
+    setState(() {
+      _messages
+        ..clear()
+        ..add(
+          const _AIMessage(
+            text:
+                'Ciao! Apriamo una conversazione su questo messaggio. Dimmi pure cosa vuoi capire meglio.',
+            isUser: false,
+          ),
+        )
+        ..add(
+          _AIMessage(
+            text: text,
+            isUser: false,
+          ),
+        );
+
+      _chatInsightIds
+        ..clear()
+        ..add(id);
+
+      _activeChatInsightIds
+        ..clear()
+        ..add(id);
+
+      _questionController.clear();
+      _isAsking = false;
+    });
+
+    _scrollChatToBottom();
+  }
+
+  Future<void> _markAiInsightsAsReadAfterView() async {
+    if (_markingAiInsightsAsRead) return;
+
+    _markingAiInsightsAsRead = true;
+
+    try {
+      await Future.delayed(const Duration(milliseconds: 1400));
+
+      if (!mounted) return;
+
+      final user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) return;
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('ai_insights')
+          .where('is_read', isEqualTo: false)
+          .limit(50)
+          .get();
+
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+
+      for (final doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'is_read': true,
+          'read_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    } catch (_) {
+      // Non blocchiamo mai la pagina AI Planner per un errore sui messaggi.
+    } finally {
+      _markingAiInsightsAsRead = false;
+    }
   }
 
   String _normalizeQuestion(String value) {
@@ -222,6 +391,20 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
       'stipendi',
       'guadagno',
       'guadagnato',
+      'cosa posso fare',
+      'cosa devo fare',
+      'che posso fare',
+      'come posso migliorare',
+      'migliorare',
+      'sistemare',
+      'consiglio',
+      'consigli',
+      'aiutami',
+      'aiutami a migliorare',
+      'come risolvo',
+      'come posso sistemare',
+      'che mi consigli',
+      'cosa mi consigli',
     ];
 
     return _containsAny(text, financialWords);
@@ -267,6 +450,8 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
       _isAsking = true;
       _questionController.clear();
     });
+
+    await _archiveActiveChatInsights();
 
     _scrollChatToBottom();
 
@@ -379,6 +564,14 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   }
 
   String _mainInsight(Map<String, dynamic> data) {
+    final smartInsights = _buildSmartInsights(data);
+
+    if (smartInsights.isNotEmpty) {
+      final first = smartInsights.first;
+
+      return '${first.title}: ${first.message}';
+    }
+
     final mood = (data['financial_mood'] ?? 'Da configurare').toString();
     final availableBudget = _amountFrom(data['available_budget']);
     final safetyBuffer = _amountFrom(data['safety_buffer']);
@@ -406,6 +599,333 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     }
 
     return 'La situazione è abbastanza stabile. Puoi continuare così, mantenendo un margine di sicurezza per eventuali imprevisti.';
+  }
+
+  List<_AIInsight> _buildSmartInsights(Map<String, dynamic> data) {
+    final insights = <_AIInsight>[];
+
+    final monthlyIncome = _amountFrom(data['monthly_income']);
+    final paidExpenses = _amountFrom(data['paid_expenses']);
+    final unpaidExpenses = _amountFrom(data['unpaid_expenses']);
+    final plannedExpenses = _amountFrom(data['planned_expenses']);
+    final totalExpenses = _amountFrom(data['total_expenses']);
+    final availableBudget = _amountFrom(data['available_budget']);
+    final safetyBuffer = _amountFrom(data['safety_buffer']);
+    final spendableBudget = _amountFrom(data['spendable_budget']);
+    final dailyAvailable = _amountFrom(data['daily_available']);
+    final previousTotalExpenses = _amountFrom(data['previous_total_expenses']);
+
+    final topCategoryName = (data['top_category_name'] ?? '').toString();
+    final topCategoryAmount = _amountFrom(data['top_category_amount']);
+
+    final categories = _listOfMaps(data['categories']);
+    final activeGoals = _listOfMaps(data['active_goals']);
+    final unpaidExpensesList = _listOfMaps(data['unpaid_expenses_list']);
+    final upcomingExpenses = _listOfMaps(data['upcoming_expenses']);
+
+    if (monthlyIncome <= 0) {
+      insights.add(
+        const _AIInsight(
+          title: 'Configura le entrate',
+          message:
+              'Inserisci almeno un’entrata mensile per permettere all’AI Planner di darti consigli realistici su spese, risparmio e obiettivi.',
+          type: 'info',
+          icon: Icons.trending_up_rounded,
+          priority: 100,
+        ),
+      );
+
+      return insights;
+    }
+
+    final expenseRatio = totalExpenses / monthlyIncome;
+    final unpaidRatio = unpaidExpenses / monthlyIncome;
+    final spendableRatio = spendableBudget / monthlyIncome;
+
+    if (totalExpenses > monthlyIncome) {
+      insights.add(
+        _AIInsight(
+          title: 'Spese sopra le entrate',
+          message:
+              'Questo mese le uscite totali superano le entrate. Ti consiglio di bloccare le spese extra e concentrarti prima sulle spese obbligatorie.',
+          type: 'danger',
+          icon: Icons.error_rounded,
+          priority: 100,
+        ),
+      );
+    } else if (expenseRatio >= 0.85) {
+      insights.add(
+        _AIInsight(
+          title: 'Budget quasi esaurito',
+          message:
+              'Hai già impegnato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio rallentare con le spese non essenziali fino a fine mese.',
+          type: 'warning',
+          icon: Icons.warning_amber_rounded,
+          priority: 90,
+        ),
+      );
+    } else if (expenseRatio >= 0.70) {
+      insights.add(
+        _AIInsight(
+          title: 'Spese da controllare',
+          message:
+              'Le spese stanno salendo: hai usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate. Sei ancora in tempo per mantenere un buon margine.',
+          type: 'warning',
+          icon: Icons.speed_rounded,
+          priority: 75,
+        ),
+      );
+    } else {
+      insights.add(
+        _AIInsight(
+          title: 'Situazione gestibile',
+          message:
+              'Le spese sono sotto controllo rispetto alle entrate. Puoi continuare così mantenendo sempre un piccolo margine per gli imprevisti.',
+          type: 'success',
+          icon: Icons.check_circle_rounded,
+          priority: 45,
+        ),
+      );
+    }
+
+    if (availableBudget < 0) {
+      insights.add(
+        _AIInsight(
+          title: 'Margine negativo',
+          message:
+              'Il budget disponibile è negativo. Prima di nuovi acquisti, controlla le spese non pagate e valuta quali costi puoi rimandare o ridurre.',
+          type: 'danger',
+          icon: Icons.account_balance_wallet_rounded,
+          priority: 98,
+        ),
+      );
+    } else if (availableBudget <= safetyBuffer && safetyBuffer > 0) {
+      insights.add(
+        _AIInsight(
+          title: 'Vicino al margine di sicurezza',
+          message:
+              'Hai ancora budget disponibile, ma sei vicino al margine di sicurezza. Meglio usare prudenza con acquisti non necessari.',
+          type: 'warning',
+          icon: Icons.shield_rounded,
+          priority: 82,
+        ),
+      );
+    }
+
+    if (unpaidExpenses > 0) {
+      if (unpaidRatio >= 0.30) {
+        insights.add(
+          _AIInsight(
+            title: 'Troppe spese ancora da pagare',
+            message:
+                'Hai ancora ${_formatMoney(unpaidExpenses)} da pagare. Prima di pensare a nuovi acquisti, ti conviene sistemare queste scadenze.',
+            type: 'warning',
+            icon: Icons.schedule_rounded,
+            priority: 88,
+          ),
+        );
+      } else {
+        insights.add(
+          _AIInsight(
+            title: 'Occhio alle prossime scadenze',
+            message:
+                'Ci sono ancora ${_formatMoney(unpaidExpenses)} di spese non pagate. Considerale nel budget prima di decidere quanto spendere.',
+            type: 'info',
+            icon: Icons.event_available_rounded,
+            priority: 58,
+          ),
+        );
+      }
+    }
+
+    if (spendableBudget > 0 && activeGoals.isNotEmpty) {
+      final suggestedSaving = spendableBudget * 0.35;
+      final safeSuggestedSaving = suggestedSaving.clamp(10.0, spendableBudget);
+
+      if (safeSuggestedSaving >= 10) {
+        final firstGoal = activeGoals.first;
+        final goalTitle = (firstGoal['title'] ?? 'il tuo obiettivo').toString();
+
+        insights.add(
+          _AIInsight(
+            title: 'Puoi alimentare un obiettivo',
+            message:
+                'Hai un margine spendibile positivo. Potresti mettere da parte circa ${_formatMoney(safeSuggestedSaving)} per “$goalTitle” senza usare tutto il budget libero.',
+            type: 'success',
+            icon: Icons.savings_rounded,
+            priority: 72,
+          ),
+        );
+      }
+    }
+
+    if (activeGoals.isNotEmpty) {
+      final sortedGoals = [...activeGoals];
+
+      sortedGoals.sort((a, b) {
+        final aRemaining = _amountFrom(a['remaining_amount']);
+        final bRemaining = _amountFrom(b['remaining_amount']);
+
+        return aRemaining.compareTo(bRemaining);
+      });
+
+      final nearestGoal = sortedGoals.first;
+      final title = (nearestGoal['title'] ?? 'Obiettivo').toString();
+      final remainingAmount = _amountFrom(nearestGoal['remaining_amount']);
+      final progress = _amountFrom(nearestGoal['progress']);
+
+      if (remainingAmount > 0 && remainingAmount <= spendableBudget) {
+        insights.add(
+          _AIInsight(
+            title: 'Obiettivo raggiungibile',
+            message:
+                'L’obiettivo “$title” è molto vicino: ti mancano ${_formatMoney(remainingAmount)} e il tuo margine attuale potrebbe coprirlo.',
+            type: 'success',
+            icon: Icons.flag_rounded,
+            priority: 86,
+          ),
+        );
+      } else if (progress >= 70 && remainingAmount > 0) {
+        insights.add(
+          _AIInsight(
+            title: 'Obiettivo quasi completato',
+            message:
+                'Sei già al ${progress.toStringAsFixed(0)}% dell’obiettivo “$title”. Ti mancano ${_formatMoney(remainingAmount)}: continua così.',
+            type: 'success',
+            icon: Icons.emoji_events_rounded,
+            priority: 68,
+          ),
+        );
+      } else if (remainingAmount > 0 && spendableBudget <= 0) {
+        insights.add(
+          _AIInsight(
+            title: 'Rallenta prima di risparmiare',
+            message:
+                'Hai obiettivi attivi, ma questo mese il margine spendibile è basso. Prima proteggi le spese essenziali, poi torna a risparmiare.',
+            type: 'warning',
+            icon: Icons.flag_circle_rounded,
+            priority: 70,
+          ),
+        );
+      }
+    }
+
+    if (topCategoryName.isNotEmpty && topCategoryAmount > 0) {
+      final categoryRatio = totalExpenses > 0 ? topCategoryAmount / totalExpenses : 0;
+
+      if (categoryRatio >= 0.35) {
+        final possibleSaving = topCategoryAmount * 0.20;
+
+        insights.add(
+          _AIInsight(
+            title: 'Categoria molto pesante',
+            message:
+                'La categoria “$topCategoryName” pesa molto sulle uscite. Riducendola del 20%, potresti liberare circa ${_formatMoney(possibleSaving)}.',
+            type: 'warning',
+            icon: Icons.pie_chart_rounded,
+            priority: 78,
+          ),
+        );
+      }
+    }
+
+    if (previousTotalExpenses > 0) {
+      final difference = totalExpenses - previousTotalExpenses;
+
+      if (difference > 0) {
+        final diffRatio = difference / previousTotalExpenses;
+
+        if (diffRatio >= 0.20) {
+          insights.add(
+            _AIInsight(
+              title: 'Spese in aumento',
+              message:
+                  'Questo mese stai spendendo ${_formatMoney(difference)} in più rispetto al mese scorso. Controlla le categorie più alte per capire dove intervenire.',
+              type: 'warning',
+              icon: Icons.trending_up_rounded,
+              priority: 76,
+            ),
+          );
+        }
+      } else if (difference < 0) {
+        insights.add(
+          _AIInsight(
+            title: 'Stai spendendo meno',
+            message:
+                'Ottimo: questo mese stai spendendo ${_formatMoney(difference.abs())} in meno rispetto al mese scorso. Potresti trasformare parte di questo risparmio in obiettivi.',
+            type: 'success',
+            icon: Icons.trending_down_rounded,
+            priority: 55,
+          ),
+        );
+      }
+    }
+
+    if (dailyAvailable > 0 && dailyAvailable < 10) {
+      insights.add(
+        _AIInsight(
+          title: 'Budget giornaliero basso',
+          message:
+              'Il tuo margine giornaliero è di circa ${_formatMoney(dailyAvailable)}. Per arrivare tranquillo a fine mese, evita spese extra frequenti.',
+          type: 'warning',
+          icon: Icons.today_rounded,
+          priority: 73,
+        ),
+      );
+    } else if (dailyAvailable >= 20) {
+      insights.add(
+        _AIInsight(
+          title: 'Buon margine giornaliero',
+          message:
+              'Hai circa ${_formatMoney(dailyAvailable)} al giorno disponibili. Puoi gestire il mese con serenità, senza dimenticare gli obiettivi.',
+          type: 'success',
+          icon: Icons.today_rounded,
+          priority: 42,
+        ),
+      );
+    }
+
+    if (upcomingExpenses.length >= 3 || unpaidExpensesList.length >= 3) {
+      insights.add(
+        _AIInsight(
+          title: 'Molte spese da monitorare',
+          message:
+              'Hai diverse spese in arrivo o ancora da pagare. Ti consiglio di controllarle prima di decidere nuovi acquisti.',
+          type: 'info',
+          icon: Icons.notifications_active_rounded,
+          priority: 64,
+        ),
+      );
+    }
+
+    if (paidExpenses <= 0 && plannedExpenses <= 0 && unpaidExpenses <= 0) {
+      insights.add(
+        const _AIInsight(
+          title: 'Aggiungi le prime spese',
+          message:
+              'Quando inserisci le spese, l’AI Planner può capire dove stai spendendo di più e suggerirti come risparmiare.',
+          type: 'info',
+          icon: Icons.receipt_long_rounded,
+          priority: 60,
+        ),
+      );
+    }
+
+    insights.sort((a, b) => b.priority.compareTo(a.priority));
+
+    final unique = <String>{};
+    final filtered = <_AIInsight>[];
+
+    for (final insight in insights) {
+      final key = '${insight.title}-${insight.message}';
+
+      if (unique.contains(key)) continue;
+
+      unique.add(key);
+      filtered.add(insight);
+    }
+
+    return filtered.take(6).toList();
   }
 
   @override
@@ -463,6 +983,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                     )
                   : <String>[];
 
+              final smartInsights = _buildSmartInsights(data);
               final categories = _listOfMaps(data['categories']);
               final activeGoals = _listOfMaps(data['active_goals']);
               final unpaidExpensesList = _listOfMaps(data['unpaid_expenses_list']);
@@ -540,11 +1061,20 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                             ],
                           ),
                           SizedBox(height: isMobile ? 16 : 22),
+                          _AIInboxCard(
+                            stream: _aiInsightsStream(),
+                            dateFrom: _aiInsightDate,
+                            onUnreadVisible: _markAiInsightsAsReadAfterView,
+                            onInsightVisibleInChat: _startChatFromInsight,
+                            onArchiveInsight: _archiveAiInsight,
+                          ),
+                          SizedBox(height: isMobile ? 16 : 22),
                           if (isMobile)
                             Column(
                               children: [
                                 _AIAdviceCard(
                                   suggestions: suggestions,
+                                  smartInsights: smartInsights,
                                   topCategoryName: topCategoryName,
                                   topCategoryAmount: _currencyFormatter.format(
                                     topCategoryAmount,
@@ -561,6 +1091,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                                   isAsking: _isAsking,
                                   onSend: _askQuestion,
                                   onQuickQuestion: _askQuickQuestion,
+                                  onNewChat: _startNewChat,
                                 ),
                               ],
                             )
@@ -572,6 +1103,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                                   flex: 6,
                                   child: _AIAdviceCard(
                                     suggestions: suggestions,
+                                    smartInsights: smartInsights,
                                     topCategoryName: topCategoryName,
                                     topCategoryAmount:
                                         _currencyFormatter.format(
@@ -593,6 +1125,7 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                                     isAsking: _isAsking,
                                     onSend: _askQuestion,
                                     onQuickQuestion: _askQuickQuestion,
+                                    onNewChat: _startNewChat,
                                   ),
                                 ),
                               ],
@@ -791,6 +1324,22 @@ class _AIMessage {
   const _AIMessage({
     required this.text,
     required this.isUser,
+  });
+}
+
+class _AIInsight {
+  final String title;
+  final String message;
+  final String type;
+  final IconData icon;
+  final int priority;
+
+  const _AIInsight({
+    required this.title,
+    required this.message,
+    required this.type,
+    required this.icon,
+    required this.priority,
   });
 }
 
@@ -1294,6 +1843,7 @@ class _SummaryItem extends StatelessWidget {
 
 class _AIAdviceCard extends StatelessWidget {
   final List<String> suggestions;
+  final List<_AIInsight> smartInsights;
   final String topCategoryName;
   final String topCategoryAmount;
   final double previousTotalExpenses;
@@ -1302,6 +1852,7 @@ class _AIAdviceCard extends StatelessWidget {
 
   const _AIAdviceCard({
     required this.suggestions,
+    required this.smartInsights,
     required this.topCategoryName,
     required this.topCategoryAmount,
     required this.previousTotalExpenses,
@@ -1334,6 +1885,8 @@ class _AIAdviceCard extends StatelessWidget {
           ]
         : suggestions;
 
+    final visibleInsights = smartInsights;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -1347,14 +1900,25 @@ class _AIAdviceCard extends StatelessWidget {
             icon: Icons.psychology_alt_rounded,
           ),
           const SizedBox(height: 18),
-          ...visibleSuggestions.take(4).map(
-                (suggestion) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _AdviceRow(
-                    text: suggestion,
+          if (visibleInsights.isNotEmpty) ...[
+            ...visibleInsights.take(4).map(
+                  (insight) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _InsightRow(
+                      insight: insight,
+                    ),
                   ),
                 ),
-              ),
+          ] else ...[
+            ...visibleSuggestions.take(4).map(
+                  (suggestion) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _AdviceRow(
+                      text: suggestion,
+                    ),
+                  ),
+                ),
+          ],
           const SizedBox(height: 8),
           Container(
             width: double.infinity,
@@ -1446,6 +2010,89 @@ class _AdviceRow extends StatelessWidget {
   }
 }
 
+class _InsightRow extends StatelessWidget {
+  final _AIInsight insight;
+
+  const _InsightRow({
+    required this.insight,
+  });
+
+  Color _colorForType(BuildContext context) {
+    switch (insight.type) {
+      case 'danger':
+        return const Color(0xFFDC2626);
+      case 'warning':
+        return const Color(0xFFF59E0B);
+      case 'success':
+        return const Color(0xFF16A34A);
+      case 'info':
+      default:
+        return _AIPlannerColors.of(context).primary;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+    final color = _colorForType(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: colors.isDark ? 0.14 : 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: color.withValues(alpha: colors.isDark ? 0.24 : 0.14),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: colors.isDark ? 0.20 : 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              insight.icon,
+              size: 18,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  insight.title,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  insight.message,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AIChatCard extends StatelessWidget {
   final List<_AIMessage> messages;
   final TextEditingController controller;
@@ -1453,6 +2100,7 @@ class _AIChatCard extends StatelessWidget {
   final bool isAsking;
   final VoidCallback onSend;
   final Future<void> Function(String question) onQuickQuestion;
+  final VoidCallback onNewChat;
 
   const _AIChatCard({
     required this.messages,
@@ -1461,6 +2109,7 @@ class _AIChatCard extends StatelessWidget {
     required this.isAsking,
     required this.onSend,
     required this.onQuickQuestion,
+    required this.onNewChat,
   });
 
   @override
@@ -1475,10 +2124,52 @@ class _AIChatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle(
-            title: 'Parla con PocketPlan',
-            subtitle: 'Fai domande in base alla tua situazione finanziaria.',
-            icon: Icons.chat_bubble_rounded,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: _SectionTitle(
+                  title: 'Parla con PocketPlan',
+                  subtitle:
+                      'Fai domande in base alla tua situazione finanziaria.',
+                  icon: Icons.chat_bubble_rounded,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Material(
+                color: colors.primarySoft,
+                borderRadius: BorderRadius.circular(999),
+                child: InkWell(
+                  onTap: onNewChat,
+                  borderRadius: BorderRadius.circular(999),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.add_comment_rounded,
+                          size: 16,
+                          color: colors.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Nuova chat',
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
           Wrap(
@@ -2579,6 +3270,347 @@ class _EmptyMiniState extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AIInboxCard extends StatelessWidget {
+  final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
+  final DateTime? Function(dynamic value) dateFrom;
+  final Future<void> Function() onUnreadVisible;
+  final void Function({
+    required String id,
+    required String title,
+    required String message,
+  }) onInsightVisibleInChat;
+  final Future<void> Function(String insightId) onArchiveInsight;
+
+  const _AIInboxCard({
+    required this.stream,
+    required this.dateFrom,
+    required this.onUnreadVisible,
+    required this.onInsightVisibleInChat,
+    required this.onArchiveInsight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(context),
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          final docs = (snapshot.data?.docs ?? []).where((doc) {
+            final data = doc.data();
+
+            return data['is_archived'] != true;
+          }).take(8).toList();
+          final hasUnread = docs.any((doc) {
+            final data = doc.data();
+
+            return data['is_read'] != true;
+          });
+
+          if (hasUnread) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              onUnreadVisible();
+            });
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                title: 'Messaggi AI recenti',
+                subtitle:
+                    'Qui trovi gli avvisi automatici che PocketPlan genera quando nota qualcosa di importante.',
+                icon: Icons.mark_chat_unread_rounded,
+              ),
+              const SizedBox(height: 18),
+              if (snapshot.connectionState == ConnectionState.waiting)
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: colors.primary,
+                    ),
+                  ),
+                )
+              else if (docs.isEmpty)
+                const _EmptyMiniState(
+                  icon: Icons.auto_awesome_outlined,
+                  title: 'Nessun messaggio AI',
+                  text:
+                      'Quando l’AI noterà spese alte, budget quasi finito o possibilità di risparmio, vedrai qui i suoi messaggi.',
+                )
+              else
+                Column(
+                  children: docs.map((doc) {
+                    final data = doc.data();
+
+                    return _AIInboxRow(
+                      id: doc.id,
+                      title: (data['title'] ?? 'Messaggio AI').toString(),
+                      message: (data['message'] ?? '').toString(),
+                      type: (data['type'] ?? 'info').toString(),
+                      isRead: data['is_read'] == true,
+                      date: dateFrom(data['created_at']),
+                      onAskAi: () {
+                        onInsightVisibleInChat(
+                          id: doc.id,
+                          title: (data['title'] ?? 'Messaggio AI').toString(),
+                          message: (data['message'] ?? '').toString(),
+                        );
+                      },
+                      onArchive: () => onArchiveInsight(doc.id),
+                    );
+                  }).toList(),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AIInboxRow extends StatelessWidget {
+  final String id;
+  final String title;
+  final String message;
+  final String type;
+  final bool isRead;
+  final DateTime? date;
+  final VoidCallback onAskAi;
+  final VoidCallback onArchive;
+
+  const _AIInboxRow({
+    required this.id,
+    required this.title,
+    required this.message,
+    required this.type,
+    required this.isRead,
+    required this.date,
+    required this.onAskAi,
+    required this.onArchive,
+  });
+
+  Color _colorForType(BuildContext context) {
+    switch (type) {
+      case 'danger':
+        return const Color(0xFFDC2626);
+      case 'warning':
+        return const Color(0xFFF59E0B);
+      case 'success':
+        return const Color(0xFF16A34A);
+      case 'info':
+      default:
+        return _AIPlannerColors.of(context).primary;
+    }
+  }
+
+  IconData _iconForType() {
+    switch (type) {
+      case 'danger':
+        return Icons.error_rounded;
+      case 'warning':
+        return Icons.warning_amber_rounded;
+      case 'success':
+        return Icons.check_circle_rounded;
+      case 'info':
+      default:
+        return Icons.auto_awesome_rounded;
+    }
+  }
+
+  String _dateLabel() {
+    if (date == null) return 'Ora';
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date!.year, date!.month, date!.day);
+
+    final diff = today.difference(target).inDays;
+
+    if (diff == 0) return 'Oggi';
+    if (diff == 1) return 'Ieri';
+    if (diff < 7) return '$diff giorni fa';
+
+    return DateFormat('dd/MM/yyyy', 'it_IT').format(date!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+    final color = _colorForType(context);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isRead
+            ? colors.cardSoft
+            : color.withValues(alpha: colors.isDark ? 0.16 : 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isRead
+              ? colors.border
+              : color.withValues(alpha: colors.isDark ? 0.28 : 0.18),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: colors.isDark ? 0.20 : 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              _iconForType(),
+              color: color,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w900,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (!isRead)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text(
+                          'Nuovo',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            height: 1,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                if (message.isNotEmpty)
+                  Text(
+                    message,
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _InfoBadge(
+                      text: _dateLabel(),
+                      icon: Icons.schedule_rounded,
+                    ),
+                    _InboxActionButton(
+                      label: 'Parla con l’AI',
+                      icon: Icons.chat_bubble_rounded,
+                      color: color,
+                      onTap: onAskAi,
+                    ),
+                    _InboxActionButton(
+                      label: 'Ho capito',
+                      icon: Icons.check_rounded,
+                      color: const Color(0xFF16A34A),
+                      onTap: onArchive,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InboxActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _InboxActionButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
+    return Material(
+      color: color.withValues(alpha: colors.isDark ? 0.18 : 0.10),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 7,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: color,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
