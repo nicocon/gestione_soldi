@@ -12,7 +12,12 @@
           "package_name": "com.example.gestionale_soldi"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "342056390141-a8a8s8hgskmjjbpnq0rcjn5ktn8v13t9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBbvfzYpJ7DZ7oVRaoN_Lwz7UsObQZ3YB4"
@@ -20,7 +25,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "342056390141-a8a8s8hgskmjjbpnq0rcjn5ktn8v13t9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "342056390141-6ndr34mrrkqfjtch44rj59r8e2l42j24.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.gestionaleSoldi"
+              }
+            }
+          ]
         }
       }
     }
