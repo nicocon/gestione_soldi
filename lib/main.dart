@@ -8,6 +8,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
 import 'pages/landing_page.dart';
 import 'pages/auth_page.dart';
+import 'pages/onboarding_page.dart';
+import 'services/notification_service.dart';
 import 'widgets/app_shell.dart';
 
 void main() async {
@@ -18,6 +20,10 @@ void main() async {
   );
 
   await initializeDateFormatting('it_IT', null);
+
+  await NotificationService.instance.initialize();
+
+  await NotificationService.instance.requestPermissions();
 
   runApp(const PocketPlanApp());
 }
@@ -296,7 +302,10 @@ class PocketPlanApp extends StatelessWidget {
         }
 
         return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots(),
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
           builder: (context, userDocSnapshot) {
             final data = userDocSnapshot.data?.data();
             final themeModeValue = data?['theme_mode']?.toString();
@@ -325,26 +334,98 @@ class AuthWrapper extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: Color(0xFFF4F7FB),
-            body: Center(
-              child: CircularProgressIndicator(),
-            ),
-          );
+      builder: (context, authSnapshot) {
+        if (authSnapshot.connectionState == ConnectionState.waiting) {
+          return const _LoadingScreen();
         }
 
-        if (snapshot.hasData) {
-          return const AppShell();
+        final user = authSnapshot.data;
+
+        if (user == null) {
+          if (kIsWeb) {
+            return const LandingPage();
+          }
+
+          return const AuthPage();
         }
 
-        if (kIsWeb) {
-          return const LandingPage();
-        }
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
+          builder: (context, userDocSnapshot) {
+            if (userDocSnapshot.connectionState == ConnectionState.waiting) {
+              return const _LoadingScreen();
+            }
 
-        return const AuthPage();
+            if (userDocSnapshot.hasError) {
+              return const _ErrorScreen(
+                message:
+                    'Si è verificato un problema durante il caricamento del profilo.',
+              );
+            }
+
+            final userData = userDocSnapshot.data?.data();
+
+            if (userData == null) {
+              return const _LoadingScreen();
+            }
+
+            final bool onboardingCompleted =
+                userData['onboarding_completed'] == true;
+
+            if (!onboardingCompleted) {
+              return const OnboardingPage();
+            }
+
+            return const AppShell();
+          },
+        );
       },
+    );
+  }
+}
+
+class _LoadingScreen extends StatelessWidget {
+  const _LoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFFF4F7FB),
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+  }
+}
+
+class _ErrorScreen extends StatelessWidget {
+  final String message;
+
+  const _ErrorScreen({
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF172033),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

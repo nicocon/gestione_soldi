@@ -1,9 +1,13 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:excel/excel.dart' hide Border, TextSpan;
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/auth_service.dart';
 import '../services/finance_service.dart';
@@ -192,6 +196,66 @@ class _DashboardPageState extends State<DashboardPage> {
     return total;
   }
 
+  double _sumPaidPlannedMovementsForMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
+  ) {
+    if (snapshot == null) return 0;
+
+    double total = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      if (!_isPlannedExpense(data)) continue;
+
+      final splitItems = _splitItemsFrom(data['split_items']);
+
+      for (final item in splitItems) {
+        final rawPaidAt = item['paid_at'];
+
+        if (rawPaidAt is! Timestamp) continue;
+
+        final paidAt = rawPaidAt.toDate();
+
+        if (_sameMonth(paidAt, month)) {
+          total += _amountFrom(item['amount']);
+        }
+      }
+    }
+
+    return total;
+  }
+
+  double _sumUnpaidStandardExpensesForMonth(
+    QuerySnapshot<Map<String, dynamic>>? snapshot,
+    DateTime month,
+  ) {
+    if (snapshot == null) return 0;
+
+    double total = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      if (_isPlannedExpense(data)) continue;
+
+      final rawDueDate = data['due_date'];
+
+      if (rawDueDate is! Timestamp) continue;
+
+      final dueDate = rawDueDate.toDate();
+
+      if (!_sameMonth(dueDate, month)) continue;
+
+      if (data['is_paid'] != true) {
+        total += _amountFrom(data['amount']);
+      }
+    }
+
+    return total;
+  }
+
   int _countMonthlyExpenses(
     QuerySnapshot<Map<String, dynamic>>? snapshot,
     DateTime month,
@@ -323,6 +387,71 @@ class _DashboardPageState extends State<DashboardPage> {
     return total / pastMonths.length;
   }
 
+  List<_CalendarDayMovementItem> _calendarMovementItemsForCurrentMonth(
+    QuerySnapshot<Map<String, dynamic>>? incomesSnapshot,
+    QuerySnapshot<Map<String, dynamic>>? expensesSnapshot,
+  ) {
+    final List<_CalendarDayMovementItem> items = [];
+
+    for (final doc in incomesSnapshot?.docs ?? []) {
+      final data = doc.data();
+
+      final rawDate = data['date'];
+
+      if (rawDate is! Timestamp) continue;
+
+      final date = rawDate.toDate();
+
+      if (!_sameMonth(date, _currentMonth)) continue;
+
+      items.add(
+        _CalendarDayMovementItem(
+          day: date.day,
+          title: (data['title'] ?? 'Entrata').toString(),
+          category: (data['bank_account_name'] ??
+                  data['bankAccountName'] ??
+                  data['bank_account_label'] ??
+                  'Entrata')
+              .toString(),
+          amount: _amountFrom(data['amount']),
+          date: date,
+          isPaid: true,
+          type: _CalendarMovementType.income,
+        ),
+      );
+    }
+
+    for (final doc in expensesSnapshot?.docs ?? []) {
+      final data = doc.data();
+
+      if (_isPlannedExpense(data)) continue;
+
+      final rawDueDate = data['due_date'];
+
+      if (rawDueDate is! Timestamp) continue;
+
+      final dueDate = rawDueDate.toDate();
+
+      if (!_sameMonth(dueDate, _currentMonth)) continue;
+
+      items.add(
+        _CalendarDayMovementItem(
+          day: dueDate.day,
+          title: (data['title'] ?? 'Spesa').toString(),
+          category: (data['category'] ?? 'Generale').toString(),
+          amount: _amountFrom(data['amount']),
+          date: dueDate,
+          isPaid: data['is_paid'] == true,
+          type: _CalendarMovementType.expense,
+        ),
+      );
+    }
+
+    items.sort((a, b) => a.date.compareTo(b.date));
+
+    return items;
+  }
+
   List<_ExpensePreviewItem> _expensePreviewItemsForCurrentMonth(
     QuerySnapshot<Map<String, dynamic>>? snapshot,
   ) {
@@ -415,6 +544,584 @@ class _DashboardPageState extends State<DashboardPage> {
         financeService: _financeService,
       ),
     );
+  }
+
+  Future<void> _exportFinancialExcel({
+    required QuerySnapshot<Map<String, dynamic>>? incomesSnapshot,
+    required QuerySnapshot<Map<String, dynamic>>? expensesSnapshot,
+    required QuerySnapshot<Map<String, dynamic>>? goalsSnapshot,
+    required QuerySnapshot<Map<String, dynamic>>? bankAccountsSnapshot,
+    required List<_MonthlySummaryItem> monthlySummaries,
+    required DateTime currentMonth,
+    required double currentMonthIncomes,
+    required double currentMonthExpenses,
+    required double currentMonthBalance,
+    required double totalBankBalance,
+    required double currentMonthBudgetExpected,
+  }) async {
+    try {
+      final excel = Excel.createExcel();
+
+      final summarySheet = excel['Riepilogo'];
+      final incomesSheet = excel['Entrate'];
+      final expensesSheet = excel['Uscite'];
+      final goalsSheet = excel['Obiettivi'];
+      final accountsSheet = excel['Conti'];
+      final trendSheet = excel['Andamento'];
+      final calendarSheet = excel['Calendario'];
+
+      excel.setDefaultSheet('Riepilogo');
+
+      final defaultSheet = excel.getDefaultSheet();
+
+      if (defaultSheet != null && defaultSheet != 'Riepilogo') {
+        excel.delete(defaultSheet);
+      }
+
+      void setCell(
+        Sheet sheet,
+        int row,
+        int column,
+        CellValue? value,
+      ) {
+        sheet
+            .cell(
+              CellIndex.indexByColumnRow(
+                columnIndex: column,
+                rowIndex: row,
+              ),
+            )
+            .value = value;
+      }
+
+      void setText(
+        Sheet sheet,
+        int row,
+        int column,
+        String value,
+      ) {
+        setCell(sheet, row, column, TextCellValue(value));
+      }
+
+      void setNumber(
+        Sheet sheet,
+        int row,
+        int column,
+        double value,
+      ) {
+        setCell(sheet, row, column, DoubleCellValue(value));
+      }
+
+      void setHeader(
+        Sheet sheet,
+        int row,
+        List<String> values,
+      ) {
+        for (int i = 0; i < values.length; i++) {
+          setText(sheet, row, i, values[i]);
+        }
+      }
+
+      String formatDate(DateTime date) {
+        return DateFormat('dd/MM/yyyy', 'it_IT').format(date);
+      }
+
+      String formatMonth(DateTime date) {
+        return DateFormat('MMMM yyyy', 'it_IT').format(date);
+      }
+
+      DateTime? timestampToDate(dynamic value) {
+        if (value is Timestamp) return value.toDate();
+
+        return null;
+      }
+
+      String bankAccountNameFrom(Map<String, dynamic> data) {
+        return (data['bank_account_name'] ??
+                data['bankAccountName'] ??
+                data['bank_account_label'] ??
+                data['bankAccountLabel'] ??
+                '')
+            .toString();
+      }
+
+      final incomesRows = <Map<String, dynamic>>[];
+      final expensesRows = <Map<String, dynamic>>[];
+      final calendarRows = <Map<String, dynamic>>[];
+
+      double totalIncomesAll = 0;
+      double totalExpensesAll = 0;
+      double totalBudgetExpectedAll = 0;
+      double totalPaidBudgetMovementsAll = 0;
+
+      // =========================
+      // PREPARA ENTRATE
+      // =========================
+      for (final doc in incomesSnapshot?.docs ?? []) {
+        final data = doc.data();
+        final date = timestampToDate(data['date']);
+        final amount = _amountFrom(data['amount']);
+
+        totalIncomesAll += amount;
+
+        incomesRows.add({
+          'date': date,
+          'title': (data['title'] ?? 'Entrata').toString(),
+          'amount': amount,
+          'account': bankAccountNameFrom(data),
+        });
+
+        if (date != null && _sameMonth(date, currentMonth)) {
+          calendarRows.add({
+            'date': date,
+            'type': 'Entrata',
+            'title': (data['title'] ?? 'Entrata').toString(),
+            'category': bankAccountNameFrom(data).isEmpty
+                ? 'Entrata'
+                : bankAccountNameFrom(data),
+            'income': amount,
+            'expense': 0.0,
+            'status': 'Incassata',
+          });
+        }
+      }
+
+      incomesRows.sort((a, b) {
+        final first = a['date'] as DateTime?;
+        final second = b['date'] as DateTime?;
+
+        return (first ?? DateTime(1900)).compareTo(
+          second ?? DateTime(1900),
+        );
+      });
+
+      // =========================
+      // PREPARA USCITE
+      // =========================
+      for (final doc in expensesSnapshot?.docs ?? []) {
+        final data = doc.data();
+
+        if (_isPlannedExpense(data)) {
+          final month = timestampToDate(data['month']);
+          final amount = _amountFrom(data['amount']);
+          final title = (data['title'] ?? 'Budget').toString();
+          final category = (data['category'] ?? 'Generale').toString();
+
+          totalBudgetExpectedAll += amount;
+
+          expensesRows.add({
+            'date': month,
+            'title': title,
+            'category': category,
+            'type': 'Budget mensile',
+            'amount': amount,
+            'status': 'Previsto',
+            'notes': 'Budget pianificato',
+          });
+
+          final splitItems = _splitItemsFrom(data['split_items']);
+
+          for (final item in splitItems) {
+            final paidAt = timestampToDate(item['paid_at']);
+            final splitAmount = _amountFrom(item['amount']);
+            final splitTitle = (item['title'] ?? '').toString().trim();
+
+            totalPaidBudgetMovementsAll += splitAmount;
+            totalExpensesAll += splitAmount;
+
+            expensesRows.add({
+              'date': paidAt,
+              'title': splitTitle.isEmpty ? title : splitTitle,
+              'category': category,
+              'type': 'Movimento budget',
+              'amount': splitAmount,
+              'status': 'Pagato',
+              'notes': 'Collegato al budget: $title',
+            });
+
+            if (paidAt != null && _sameMonth(paidAt, currentMonth)) {
+              calendarRows.add({
+                'date': paidAt,
+                'type': 'Uscita',
+                'title': splitTitle.isEmpty ? title : splitTitle,
+                'category': category,
+                'income': 0.0,
+                'expense': splitAmount,
+                'status': 'Pagata',
+              });
+            }
+          }
+
+          continue;
+        }
+
+        final dueDate = timestampToDate(data['due_date']);
+        final amount = _amountFrom(data['amount']);
+        final title = (data['title'] ?? 'Spesa').toString();
+        final category = (data['category'] ?? 'Generale').toString();
+        final isPaid = data['is_paid'] == true;
+
+        totalExpensesAll += amount;
+
+        expensesRows.add({
+          'date': dueDate,
+          'title': title,
+          'category': category,
+          'type': 'Spesa normale',
+          'amount': amount,
+          'status': isPaid ? 'Pagata' : 'Da pagare',
+          'notes': '',
+        });
+
+        if (dueDate != null && _sameMonth(dueDate, currentMonth)) {
+          calendarRows.add({
+            'date': dueDate,
+            'type': 'Uscita',
+            'title': title,
+            'category': category,
+            'income': 0.0,
+            'expense': amount,
+            'status': isPaid ? 'Pagata' : 'Da pagare',
+          });
+        }
+      }
+
+      expensesRows.sort((a, b) {
+        final first = a['date'] as DateTime?;
+        final second = b['date'] as DateTime?;
+
+        return (first ?? DateTime(1900)).compareTo(
+          second ?? DateTime(1900),
+        );
+      });
+
+      calendarRows.sort((a, b) {
+        final first = a['date'] as DateTime?;
+        final second = b['date'] as DateTime?;
+
+        return (first ?? DateTime(1900)).compareTo(
+          second ?? DateTime(1900),
+        );
+      });
+
+      final activeGoals = _countActiveGoals(goalsSnapshot);
+      final totalGoals = goalsSnapshot?.docs.length ?? 0;
+      final completedGoals = totalGoals - activeGoals;
+
+      final currentMonthName = formatMonth(currentMonth);
+      final generatedAt = DateFormat('dd/MM/yyyy HH:mm', 'it_IT').format(
+        DateTime.now(),
+      );
+
+      // =========================
+      // RIEPILOGO
+      // =========================
+      setText(summarySheet, 0, 0, 'PocketPlan - Report finanziario');
+      setText(summarySheet, 1, 0, 'Generato il');
+      setText(summarySheet, 1, 1, generatedAt);
+
+      setText(summarySheet, 3, 0, 'Mese analizzato');
+      setText(summarySheet, 3, 1, currentMonthName);
+
+      setText(summarySheet, 5, 0, 'Entrate mese');
+      setNumber(summarySheet, 5, 1, currentMonthIncomes);
+
+      setText(summarySheet, 6, 0, 'Uscite mese');
+      setNumber(summarySheet, 6, 1, currentMonthExpenses);
+
+      setText(summarySheet, 7, 0, 'Saldo mese');
+      setNumber(summarySheet, 7, 1, currentMonthBalance);
+
+      setText(summarySheet, 8, 0, 'Budget previsti mese');
+      setNumber(summarySheet, 8, 1, currentMonthBudgetExpected);
+
+      setText(summarySheet, 9, 0, 'Totale conti');
+      setNumber(summarySheet, 9, 1, totalBankBalance);
+
+      setText(summarySheet, 11, 0, 'Entrate totali registrate');
+      setNumber(summarySheet, 11, 1, totalIncomesAll);
+
+      setText(summarySheet, 12, 0, 'Uscite totali registrate');
+      setNumber(summarySheet, 12, 1, totalExpensesAll);
+
+      setText(summarySheet, 13, 0, 'Saldo totale movimenti');
+      setNumber(summarySheet, 13, 1, totalIncomesAll - totalExpensesAll);
+
+      setText(summarySheet, 14, 0, 'Budget totali pianificati');
+      setNumber(summarySheet, 14, 1, totalBudgetExpectedAll);
+
+      setText(summarySheet, 15, 0, 'Movimenti budget pagati');
+      setNumber(summarySheet, 15, 1, totalPaidBudgetMovementsAll);
+
+      setText(summarySheet, 17, 0, 'Obiettivi totali');
+      setNumber(summarySheet, 17, 1, totalGoals.toDouble());
+
+      setText(summarySheet, 18, 0, 'Obiettivi attivi');
+      setNumber(summarySheet, 18, 1, activeGoals.toDouble());
+
+      setText(summarySheet, 19, 0, 'Obiettivi completati');
+      setNumber(summarySheet, 19, 1, completedGoals.toDouble());
+
+      setText(summarySheet, 21, 0, 'Lettura veloce');
+
+      String quickMessage;
+
+      if (currentMonthBalance > 0) {
+        quickMessage =
+            'Il mese è positivo: le entrate superano le uscite registrate.';
+      } else if (currentMonthBalance < 0) {
+        quickMessage =
+            'Attenzione: nel mese le uscite superano le entrate registrate.';
+      } else {
+        quickMessage =
+            'Il mese è in pareggio: entrate e uscite registrate si equivalgono.';
+      }
+
+      setText(summarySheet, 22, 0, quickMessage);
+
+      // =========================
+      // ENTRATE
+      // =========================
+      setHeader(incomesSheet, 0, [
+        'Data',
+        'Titolo',
+        'Importo',
+        'Conto',
+      ]);
+
+      int incomeRow = 1;
+
+      for (final item in incomesRows) {
+        final date = item['date'] as DateTime?;
+
+        setText(incomesSheet, incomeRow, 0, date == null ? '' : formatDate(date));
+        setText(incomesSheet, incomeRow, 1, item['title'].toString());
+        setNumber(incomesSheet, incomeRow, 2, _amountFrom(item['amount']));
+        setText(incomesSheet, incomeRow, 3, item['account'].toString());
+
+        incomeRow++;
+      }
+
+      if (incomeRow == 1) {
+        setText(incomesSheet, 1, 0, 'Nessuna entrata trovata');
+      } else {
+        incomeRow++;
+        setText(incomesSheet, incomeRow, 1, 'Totale entrate');
+        setNumber(incomesSheet, incomeRow, 2, totalIncomesAll);
+      }
+
+      // =========================
+      // USCITE
+      // =========================
+      setHeader(expensesSheet, 0, [
+        'Data',
+        'Titolo',
+        'Categoria',
+        'Tipo',
+        'Importo',
+        'Stato',
+        'Note',
+      ]);
+
+      int expenseRow = 1;
+
+      for (final item in expensesRows) {
+        final date = item['date'] as DateTime?;
+
+        setText(expensesSheet, expenseRow, 0, date == null ? '' : formatDate(date));
+        setText(expensesSheet, expenseRow, 1, item['title'].toString());
+        setText(expensesSheet, expenseRow, 2, item['category'].toString());
+        setText(expensesSheet, expenseRow, 3, item['type'].toString());
+        setNumber(expensesSheet, expenseRow, 4, _amountFrom(item['amount']));
+        setText(expensesSheet, expenseRow, 5, item['status'].toString());
+        setText(expensesSheet, expenseRow, 6, item['notes'].toString());
+
+        expenseRow++;
+      }
+
+      if (expenseRow == 1) {
+        setText(expensesSheet, 1, 0, 'Nessuna uscita trovata');
+      } else {
+        expenseRow++;
+        setText(expensesSheet, expenseRow, 3, 'Totale uscite effettive');
+        setNumber(expensesSheet, expenseRow, 4, totalExpensesAll);
+
+        expenseRow++;
+        setText(expensesSheet, expenseRow, 3, 'Totale budget pianificati');
+        setNumber(expensesSheet, expenseRow, 4, totalBudgetExpectedAll);
+      }
+
+      // =========================
+      // OBIETTIVI
+      // =========================
+      setHeader(goalsSheet, 0, [
+        'Titolo',
+        'Importo attuale',
+        'Importo obiettivo',
+        'Mancano',
+        'Progresso %',
+        'Scadenza',
+        'Stato',
+      ]);
+
+      int goalRow = 1;
+
+      for (final doc in goalsSnapshot?.docs ?? []) {
+        final data = doc.data();
+
+        final target = _amountFrom(data['target_amount']);
+        final current = _amountFrom(data['current_amount']);
+        final missing = math.max(0, target - current);
+        final progress = target <= 0 ? 0 : (current / target) * 100;
+
+        final deadline = timestampToDate(data['deadline']);
+        final isCompleted = target > 0 && current >= target;
+
+        setText(goalsSheet, goalRow, 0, (data['title'] ?? 'Obiettivo').toString());
+        setNumber(goalsSheet, goalRow, 1, current);
+        setNumber(goalsSheet, goalRow, 2, target);
+        setNumber(goalsSheet, goalRow, 3, missing.toDouble());
+        setNumber(goalsSheet, goalRow, 4, progress.toDouble());
+        setText(goalsSheet, goalRow, 5, deadline == null ? '' : formatDate(deadline));
+        setText(goalsSheet, goalRow, 6, isCompleted ? 'Completato' : 'Attivo');
+
+        goalRow++;
+      }
+
+      if (goalRow == 1) {
+        setText(goalsSheet, 1, 0, 'Nessun obiettivo trovato');
+      }
+
+      // =========================
+      // CONTI
+      // =========================
+      setHeader(accountsSheet, 0, [
+        'Nome conto',
+        'Saldo',
+      ]);
+
+      int accountRow = 1;
+
+      for (final doc in bankAccountsSnapshot?.docs ?? []) {
+        final data = doc.data();
+
+        setText(accountsSheet, accountRow, 0, (data['name'] ?? 'Conto').toString());
+        setNumber(accountsSheet, accountRow, 1, _amountFrom(data['balance']));
+
+        accountRow++;
+      }
+
+      if (accountRow == 1) {
+        setText(accountsSheet, 1, 0, 'Nessun conto trovato');
+      } else {
+        accountRow++;
+        setText(accountsSheet, accountRow, 0, 'Totale conti');
+        setNumber(accountsSheet, accountRow, 1, totalBankBalance);
+      }
+
+      // =========================
+      // ANDAMENTO
+      // =========================
+      setHeader(trendSheet, 0, [
+        'Mese',
+        'Entrate',
+        'Uscite',
+        'Saldo',
+      ]);
+
+      for (int i = 0; i < monthlySummaries.length; i++) {
+        final item = monthlySummaries[i];
+        final row = i + 1;
+
+        setText(trendSheet, row, 0, item.monthLabel);
+        setNumber(trendSheet, row, 1, item.incomes);
+        setNumber(trendSheet, row, 2, item.expenses);
+        setNumber(trendSheet, row, 3, item.balance);
+      }
+
+      // =========================
+      // CALENDARIO
+      // =========================
+      setHeader(calendarSheet, 0, [
+        'Data',
+        'Tipo',
+        'Titolo',
+        'Categoria / Conto',
+        'Entrata',
+        'Uscita',
+        'Saldo movimento',
+        'Stato',
+      ]);
+
+      int calendarRow = 1;
+
+      for (final item in calendarRows) {
+        final date = item['date'] as DateTime?;
+        final income = _amountFrom(item['income']);
+        final expense = _amountFrom(item['expense']);
+
+        setText(calendarSheet, calendarRow, 0, date == null ? '' : formatDate(date));
+        setText(calendarSheet, calendarRow, 1, item['type'].toString());
+        setText(calendarSheet, calendarRow, 2, item['title'].toString());
+        setText(calendarSheet, calendarRow, 3, item['category'].toString());
+        setNumber(calendarSheet, calendarRow, 4, income);
+        setNumber(calendarSheet, calendarRow, 5, expense);
+        setNumber(calendarSheet, calendarRow, 6, income - expense);
+        setText(calendarSheet, calendarRow, 7, item['status'].toString());
+
+        calendarRow++;
+      }
+
+      if (calendarRow == 1) {
+        setText(
+          calendarSheet,
+          1,
+          0,
+          'Nessun movimento nel mese corrente',
+        );
+      } else {
+        calendarRow++;
+        setText(calendarSheet, calendarRow, 3, 'Totale mese');
+        setNumber(calendarSheet, calendarRow, 4, currentMonthIncomes);
+        setNumber(calendarSheet, calendarRow, 5, currentMonthExpenses);
+        setNumber(calendarSheet, calendarRow, 6, currentMonthBalance);
+      }
+
+      final fileName =
+          'pocketplan_report_${DateFormat('yyyy_MM_dd_HH_mm').format(DateTime.now())}.xlsx';
+
+      if (kIsWeb) {
+        await excel.save(fileName: fileName);
+      } else {
+        final bytes = excel.encode();
+
+        if (bytes == null || bytes.isEmpty) {
+          throw Exception('File Excel non generato');
+        }
+
+        await Share.shareXFiles(
+          [
+            XFile.fromData(
+              Uint8List.fromList(bytes),
+              name: fileName,
+              mimeType:
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ),
+          ],
+          subject: 'Report finanziario PocketPlan',
+          text: 'Esportazione report finanziario PocketPlan',
+        );
+      }
+    } catch (e) {
+      debugPrint('ERRORE EXPORT EXCEL: $e');
+
+      if (!mounted) return;
+
+      _showDashboardError(
+        context,
+        'Non sono riuscito a esportare l’Excel. Riprova tra poco.',
+      );
+    }
   }
 
   Future<void> _showResponsiveSheet({
@@ -540,6 +1247,44 @@ class _DashboardPageState extends State<DashboardPage> {
                             currentMonth,
                           );
 
+                          final currentMonthPaidPlannedMovements =
+                              _sumPaidPlannedMovementsForMonth(
+                            expensesDocs,
+                            currentMonth,
+                          );
+
+                          final currentMonthUnpaidStandardExpenses =
+                              _sumUnpaidStandardExpensesForMonth(
+                            expensesDocs,
+                            currentMonth,
+                          );
+
+                          final currentMonthStandardExpenses =
+                              math.max(
+                            0,
+                            currentMonthExpenses -
+                                currentMonthPaidPlannedMovements,
+                          );
+
+                          final currentMonthProjectedExpenses =
+                              currentMonthStandardExpenses +
+                                  math.max(
+                                    currentMonthBudgetExpected,
+                                    currentMonthPaidPlannedMovements,
+                                  );
+
+                          final currentMonthProjectedBalance =
+                              currentMonthIncomes -
+                                  currentMonthProjectedExpenses;
+
+                          final currentMonthRemainingToPay =
+                              currentMonthUnpaidStandardExpenses +
+                                  math.max(
+                                    0,
+                                    currentMonthBudgetExpected -
+                                        currentMonthPaidPlannedMovements,
+                                  );
+
                           final currentMonthBalance =
                               currentMonthIncomes - currentMonthExpenses;
 
@@ -575,6 +1320,12 @@ class _DashboardPageState extends State<DashboardPage> {
                           final currentMonthExpenseItems =
                               _expensePreviewItemsForCurrentMonth(expensesDocs);
 
+                          final calendarMovementItems =
+                              _calendarMovementItemsForCurrentMonth(
+                            incomesDocs,
+                            expensesDocs,
+                          );
+
                           final isLoading = incomesSnapshot.connectionState ==
                                   ConnectionState.waiting ||
                               expensesSnapshot.connectionState ==
@@ -602,100 +1353,140 @@ class _DashboardPageState extends State<DashboardPage> {
                                     constraints:
                                         const BoxConstraints(maxWidth: 1200),
                                     child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         _HeaderSection(
                                           name: name.toString(),
-                                          currentMonthLabel: _monthFormatter
-                                              .format(currentMonth),
-                                          onAddIncome: () =>
-                                              _showAddIncomeDialog(
+                                          currentMonthLabel: _monthFormatter.format(currentMonth),
+                                          onAddIncome: () => _showAddIncomeDialog(
                                             bankAccounts: bankAccounts,
                                           ),
                                           onAddExpense: _showAddExpenseDialog,
                                           onAddGoal: _showAddGoalDialog,
+                                          onExportExcel: () => _exportFinancialExcel(
+                                            incomesSnapshot: incomesDocs,
+                                            expensesSnapshot: expensesDocs,
+                                            goalsSnapshot: goalsDocs,
+                                            bankAccountsSnapshot: bankAccountsDocs,
+                                            monthlySummaries: monthlySummaries,
+                                            currentMonth: currentMonth,
+                                            currentMonthIncomes: currentMonthIncomes,
+                                            currentMonthExpenses: currentMonthExpenses,
+                                            currentMonthBalance: currentMonthBalance,
+                                            totalBankBalance: totalBankBalance,
+                                            currentMonthBudgetExpected: currentMonthBudgetExpected,
+                                          ),
                                         ),
                                         SizedBox(height: isMobile ? 18 : 24),
-                                        if (isLoading)
-                                          const _DashboardLoadingCard(),
+                                        if (isLoading) const _DashboardLoadingCard(),
+
+                                        if (isWide)
+                                          Column(
+                                            children: [
+                                              SizedBox(
+                                                height: 700,
+                                                child: Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                                  children: [
+                                                    Expanded(
+                                                      flex: 7,
+                                                      child: _ModernFinanceOverviewCard(
+                                                        currentMonthLabel: _monthFormatter.format(currentMonth),
+                                                        currentMonthIncomes: currentMonthIncomes,
+                                                        currentMonthExpenses: currentMonthExpenses,
+                                                        currentMonthBalance: currentMonthBalance,
+                                                        currentMonthProjectedBalance: currentMonthProjectedBalance,
+                                                        currentMonthRemainingToPay: currentMonthRemainingToPay,
+                                                        totalBankBalance: totalBankBalance,
+                                                        activeGoals: activeGoals,
+                                                        expenseCountCurrentMonth: expenseCountCurrentMonth,
+                                                        currencyFormatter: _currencyFormatter,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 18),
+                                                    Expanded(
+                                                      flex: 4,
+                                                      child: _DashboardCalendarCard(
+                                                        month: currentMonth,
+                                                        movements: calendarMovementItems,
+                                                        currencyFormatter: _currencyFormatter,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 18),
+                                              _MonthlyTrendChart(
+                                                summaries: monthlySummaries,
+                                                currencyFormatter: _currencyFormatter,
+                                              ),
+                                            ],
+                                          )
+                                        else
+                                          Column(
+                                            children: [
+                                              _ModernFinanceOverviewCard(
+                                                currentMonthLabel: _monthFormatter.format(currentMonth),
+                                                currentMonthIncomes: currentMonthIncomes,
+                                                currentMonthExpenses: currentMonthExpenses,
+                                                currentMonthBalance: currentMonthBalance,
+                                                currentMonthProjectedBalance: currentMonthProjectedBalance,
+                                                currentMonthRemainingToPay: currentMonthRemainingToPay,
+                                                totalBankBalance: totalBankBalance,
+                                                activeGoals: activeGoals,
+                                                expenseCountCurrentMonth: expenseCountCurrentMonth,
+                                                currencyFormatter: _currencyFormatter,
+                                              ),
+                                              const SizedBox(height: 18),
+                                              _DashboardCalendarCard(
+                                                month: currentMonth,
+                                                movements: calendarMovementItems,
+                                                currencyFormatter: _currencyFormatter,
+                                              ),
+                                              const SizedBox(height: 18),
+                                              _MonthlyTrendChart(
+                                                summaries: monthlySummaries,
+                                                currencyFormatter: _currencyFormatter,
+                                              ),
+                                            ],
+                                          ),
+
+                                        SizedBox(height: isMobile ? 20 : 28),
+
                                         _MonthlyInsightCard(
-                                          currentMonthLabel: _monthFormatter
-                                              .format(currentMonth),
-                                          previousMonthLabel: _monthFormatter
-                                              .format(previousMonth),
-                                          currentMonthExpenses:
-                                              currentMonthExpenses,
-                                          previousMonthExpenses:
-                                              previousMonthExpenses,
-                                          averagePastExpenses:
-                                              averagePastExpenses,
-                                          expensesDifference:
-                                              expensesDifference,
-                                          expensesDifferencePercent:
-                                              expensesDifferencePercent,
-                                          currentMonthBalance:
-                                              currentMonthBalance,
-                                          previousMonthBalance:
-                                              previousMonthBalance,
-                                          currentMonthBudgetExpected:
-                                              currentMonthBudgetExpected,
+                                          currentMonthLabel: _monthFormatter.format(currentMonth),
+                                          previousMonthLabel: _monthFormatter.format(previousMonth),
+                                          currentMonthExpenses: currentMonthExpenses,
+                                          previousMonthExpenses: previousMonthExpenses,
+                                          averagePastExpenses: averagePastExpenses,
+                                          expensesDifference: expensesDifference,
+                                          expensesDifferencePercent: expensesDifferencePercent,
+                                          currentMonthBalance: currentMonthBalance,
+                                          previousMonthBalance: previousMonthBalance,
+                                          currentMonthBudgetExpected: currentMonthBudgetExpected,
                                           totalBankBalance: totalBankBalance,
-                                          currencyFormatter:
-                                              _currencyFormatter,
+                                          currencyFormatter: _currencyFormatter,
                                         ),
-                                        SizedBox(height: isMobile ? 18 : 24),
-                                        _SummaryGrid(
-                                          currentMonthIncomes:
-                                              currentMonthIncomes,
-                                          currentMonthExpenses:
-                                              currentMonthExpenses,
-                                          currentMonthBalance:
-                                              currentMonthBalance,
-                                          totalBankBalance: totalBankBalance,
-                                          activeGoals: activeGoals,
-                                          expenseCountCurrentMonth:
-                                              expenseCountCurrentMonth,
-                                          currencyFormatter:
-                                              _currencyFormatter,
-                                        ),
+
                                         SizedBox(height: isMobile ? 20 : 28),
-                                        _BankAccountsDashboardPanel(
-                                          bankAccounts: bankAccounts,
-                                          totalBankBalance: totalBankBalance,
-                                          currencyFormatter:
-                                              _currencyFormatter,
-                                        ),
-                                        SizedBox(height: isMobile ? 20 : 28),
-                                        _MonthlyTrendChart(
-                                          summaries: monthlySummaries,
-                                          currencyFormatter:
-                                              _currencyFormatter,
-                                        ),
-                                        SizedBox(height: isMobile ? 20 : 28),
+
                                         if (isWide)
                                           Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                               Expanded(
-                                                child: _ExpensesList(
-                                                  items:
-                                                      currentMonthExpenseItems,
-                                                  currencyFormatter:
-                                                      _currencyFormatter,
-                                                  dateFormatter:
-                                                      _dateFormatter,
+                                                child: _BankAccountsDashboardPanel(
+                                                  bankAccounts: bankAccounts,
+                                                  totalBankBalance: totalBankBalance,
+                                                  currencyFormatter: _currencyFormatter,
                                                 ),
                                               ),
                                               const SizedBox(width: 18),
                                               Expanded(
                                                 child: _GoalsList(
                                                   snapshot: goalsDocs,
-                                                  currencyFormatter:
-                                                      _currencyFormatter,
-                                                  dateFormatter:
-                                                      _dateFormatter,
+                                                  currencyFormatter: _currencyFormatter,
+                                                  dateFormatter: _dateFormatter,
                                                 ),
                                               ),
                                             ],
@@ -703,24 +1494,27 @@ class _DashboardPageState extends State<DashboardPage> {
                                         else
                                           Column(
                                             children: [
-                                              _ExpensesList(
-                                                items:
-                                                    currentMonthExpenseItems,
-                                                currencyFormatter:
-                                                    _currencyFormatter,
-                                                dateFormatter:
-                                                    _dateFormatter,
+                                              _BankAccountsDashboardPanel(
+                                                bankAccounts: bankAccounts,
+                                                totalBankBalance: totalBankBalance,
+                                                currencyFormatter: _currencyFormatter,
                                               ),
                                               const SizedBox(height: 18),
                                               _GoalsList(
                                                 snapshot: goalsDocs,
-                                                currencyFormatter:
-                                                    _currencyFormatter,
-                                                dateFormatter:
-                                                    _dateFormatter,
+                                                currencyFormatter: _currencyFormatter,
+                                                dateFormatter: _dateFormatter,
                                               ),
                                             ],
                                           ),
+
+                                        SizedBox(height: isMobile ? 20 : 28),
+
+                                        _ExpensesList(
+                                          items: currentMonthExpenseItems,
+                                          currencyFormatter: _currencyFormatter,
+                                          dateFormatter: _dateFormatter,
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -885,12 +1679,38 @@ class _BankAccountDashboardItem {
   });
 }
 
+enum _CalendarMovementType {
+  income,
+  expense,
+}
+
+class _CalendarDayMovementItem {
+  final int day;
+  final String title;
+  final String category;
+  final double amount;
+  final DateTime date;
+  final bool isPaid;
+  final _CalendarMovementType type;
+
+  const _CalendarDayMovementItem({
+    required this.day,
+    required this.title,
+    required this.category,
+    required this.amount,
+    required this.date,
+    required this.isPaid,
+    required this.type,
+  });
+}
+
 class _HeaderSection extends StatelessWidget {
   final String name;
   final String currentMonthLabel;
   final VoidCallback onAddIncome;
   final VoidCallback onAddExpense;
   final VoidCallback onAddGoal;
+  final VoidCallback onExportExcel;
 
   const _HeaderSection({
     required this.name,
@@ -898,6 +1718,7 @@ class _HeaderSection extends StatelessWidget {
     required this.onAddIncome,
     required this.onAddExpense,
     required this.onAddGoal,
+    required this.onExportExcel,
   });
 
   @override
@@ -934,6 +1755,7 @@ class _HeaderSection extends StatelessWidget {
                   onAddIncome: onAddIncome,
                   onAddExpense: onAddExpense,
                   onAddGoal: onAddGoal,
+                  onExportExcel: onExportExcel,
                   isMobile: true,
                 ),
               ],
@@ -952,6 +1774,7 @@ class _HeaderSection extends StatelessWidget {
                   onAddIncome: onAddIncome,
                   onAddExpense: onAddExpense,
                   onAddGoal: onAddGoal,
+                  onExportExcel: onExportExcel,
                   isMobile: false,
                 ),
               ],
@@ -1005,12 +1828,14 @@ class _HeaderActions extends StatelessWidget {
   final VoidCallback onAddIncome;
   final VoidCallback onAddExpense;
   final VoidCallback onAddGoal;
+  final VoidCallback onExportExcel;
   final bool isMobile;
 
   const _HeaderActions({
     required this.onAddIncome,
     required this.onAddExpense,
     required this.onAddGoal,
+    required this.onExportExcel,
     required this.isMobile,
   });
 
@@ -1023,6 +1848,13 @@ class _HeaderActions extends StatelessWidget {
             label: 'Aggiungi entrata',
             icon: Icons.add_rounded,
             onPressed: onAddIncome,
+            fullWidth: true,
+          ),
+          const SizedBox(height: 10),
+          _ActionButton(
+            label: 'Esporta Excel',
+            icon: Icons.file_download_rounded,
+            onPressed: onExportExcel,
             fullWidth: true,
           ),
           const SizedBox(height: 10),
@@ -1071,6 +1903,11 @@ class _HeaderActions extends StatelessWidget {
           icon: Icons.flag_rounded,
           onPressed: onAddGoal,
         ),
+        _ActionButton(
+          label: 'Excel',
+          icon: Icons.file_download_rounded,
+          onPressed: onExportExcel,
+        ),
       ],
     );
   }
@@ -1111,6 +1948,945 @@ class _ActionButton extends StatelessWidget {
           ),
           textStyle: const TextStyle(
             fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModernFinanceOverviewCard extends StatelessWidget {
+  final String currentMonthLabel;
+  final double currentMonthIncomes;
+  final double currentMonthExpenses;
+  final double currentMonthBalance;
+  final double currentMonthProjectedBalance;
+  final double currentMonthRemainingToPay;
+  final double totalBankBalance;
+  final int activeGoals;
+  final int expenseCountCurrentMonth;
+  final NumberFormat currencyFormatter;
+
+  const _ModernFinanceOverviewCard({
+    required this.currentMonthLabel,
+    required this.currentMonthIncomes,
+    required this.currentMonthExpenses,
+    required this.currentMonthBalance,
+    required this.currentMonthProjectedBalance,
+    required this.currentMonthRemainingToPay,
+    required this.totalBankBalance,
+    required this.activeGoals,
+    required this.expenseCountCurrentMonth,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final isMobile = width < 700;
+
+    final spentRatio = currentMonthIncomes <= 0
+        ? 0.0
+        : (currentMonthExpenses / currentMonthIncomes).clamp(0.0, 1.0);
+
+    final balancePositive = currentMonthBalance >= 0;
+    final projectedBalancePositive = currentMonthProjectedBalance >= 0;
+
+    String forecastMessage;
+
+    if (currentMonthIncomes <= 0) {
+      forecastMessage =
+          'Aggiungi le entrate del mese per calcolare una previsione più precisa.';
+    } else if (currentMonthRemainingToPay <= 0 && projectedBalancePositive) {
+      forecastMessage =
+          'Hai già coperto le spese principali: se non aggiungi nuove uscite, il mese può chiudersi bene.';
+    } else if (projectedBalancePositive) {
+      forecastMessage =
+          'Hai ancora ${currencyFormatter.format(currentMonthRemainingToPay)} da coprire, ma la previsione resta positiva.';
+    } else {
+      forecastMessage =
+          'Attenzione: considerando le spese previste, il mese potrebbe chiudersi in negativo.';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 18 : 22),
+      decoration: _dashboardCardDecoration(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: colors.primarySoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.space_dashboard_rounded,
+                  color: colors.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Panoramica finanziaria',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: isMobile ? 20 : 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      currentMonthLabel.toUpperCase(),
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: balancePositive
+                      ? const Color(0xFF16A34A).withValues(alpha: 0.12)
+                      : const Color(0xFFDC2626).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  balancePositive ? 'POSITIVO' : 'ATTENZIONE',
+                  style: TextStyle(
+                    color: balancePositive
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFFDC2626),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isMobile ? 20 : 24),
+          Text(
+            currencyFormatter.format(currentMonthBalance),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: isMobile ? 36 : 44,
+              fontWeight: FontWeight.w900,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Saldo del mese: entrate meno spese registrate',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 22),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: spentRatio,
+              minHeight: 10,
+              backgroundColor: colors.cardSofter,
+              color: balancePositive
+                  ? const Color(0xFF16A34A)
+                  : const Color(0xFFDC2626),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            currentMonthIncomes <= 0
+                ? 'Aggiungi le entrate del mese per calcolare il consumo.'
+                : 'Hai usato il ${(spentRatio * 100).toStringAsFixed(0)}% delle entrate mensili.',
+            style: TextStyle(
+              color: colors.textMuted,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          SizedBox(height: isMobile ? 16 : 18),
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(isMobile ? 15 : 16),
+            decoration: BoxDecoration(
+              color: projectedBalancePositive
+                  ? const Color(0xFF16A34A).withValues(
+                      alpha: colors.isDark ? 0.18 : 0.10,
+                    )
+                  : const Color(0xFFDC2626).withValues(
+                      alpha: colors.isDark ? 0.18 : 0.10,
+                    ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: projectedBalancePositive
+                    ? const Color(0xFF16A34A).withValues(alpha: 0.28)
+                    : const Color(0xFFDC2626).withValues(alpha: 0.28),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: colors.card.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    projectedBalancePositive
+                        ? Icons.insights_rounded
+                        : Icons.warning_amber_rounded,
+                    color: projectedBalancePositive
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFFDC2626),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Previsione fine mese',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        currencyFormatter.format(currentMonthProjectedBalance),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: projectedBalancePositive
+                              ? const Color(0xFF16A34A)
+                              : const Color(0xFFDC2626),
+                          fontSize: isMobile ? 24 : 26,
+                          fontWeight: FontWeight.w900,
+                          height: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        forecastMessage,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                          height: 1.35,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!isMobile) const Spacer(),
+          SizedBox(height: isMobile ? 18 : 22),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final twoColumns = constraints.maxWidth >= 560;
+
+              final cards = [
+                _ModernOverviewMiniCard(
+                  icon: Icons.trending_up_rounded,
+                  title: 'Entrate',
+                  value: currencyFormatter.format(currentMonthIncomes),
+                  accentColor: const Color(0xFF16A34A),
+                ),
+                _ModernOverviewMiniCard(
+                  icon: Icons.trending_down_rounded,
+                  title: 'Spese',
+                  value: currencyFormatter.format(currentMonthExpenses),
+                  accentColor: const Color(0xFFDC2626),
+                ),
+                _ModernOverviewMiniCard(
+                  icon: Icons.account_balance_rounded,
+                  title: 'Totale conti',
+                  value: currencyFormatter.format(totalBankBalance),
+                  accentColor: colors.primary,
+                ),
+                _ModernOverviewMiniCard(
+                  icon: Icons.flag_rounded,
+                  title: 'Obiettivi',
+                  value: activeGoals.toString(),
+                  accentColor: const Color(0xFFF59E0B),
+                ),
+              ];
+
+              if (!twoColumns) {
+                return Column(
+                  children: cards
+                      .map(
+                        (card) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: card,
+                        ),
+                      )
+                      .toList(),
+                );
+              }
+
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: cards
+                    .map(
+                      (card) => SizedBox(
+                        width: (constraints.maxWidth - 12) / 2,
+                        child: card,
+                      ),
+                    )
+                    .toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModernOverviewMiniCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String value;
+  final Color accentColor;
+
+  const _ModernOverviewMiniCard({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.cardSoft,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: colors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: colors.isDark ? 0.18 : 0.10),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              icon,
+              color: accentColor,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardCalendarCard extends StatelessWidget {
+  final DateTime month;
+  final List<_CalendarDayMovementItem> movements;
+  final NumberFormat currencyFormatter;
+
+  const _DashboardCalendarCard({
+    required this.month,
+    required this.movements,
+    required this.currencyFormatter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    final firstDay = DateTime(month.year, month.month, 1);
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final startOffset = firstDay.weekday - 1;
+
+    final today = DateTime.now();
+    final isCurrentMonth = today.year == month.year && today.month == month.month;
+
+    final movementsByDay = <int, List<_CalendarDayMovementItem>>{};
+
+    for (final item in movements) {
+      movementsByDay.putIfAbsent(item.day, () => []).add(item);
+    }
+
+    final totalIncome = movements.fold<double>(
+      0,
+      (sum, item) {
+        if (item.type != _CalendarMovementType.income) return sum;
+
+        return sum + item.amount;
+      },
+    );
+
+    final totalToPay = movements.fold<double>(
+      0,
+      (sum, item) {
+        if (item.type != _CalendarMovementType.expense) return sum;
+        if (item.isPaid) return sum;
+
+        return sum + item.amount;
+      },
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: _dashboardCardDecoration(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colors.primarySoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.calendar_month_rounded,
+                  color: colors.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Calendario finanziario',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            DateFormat('MMMM yyyy', 'it_IT').format(month).toUpperCase(),
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _CalendarInfoPill(
+                  label: 'Entrate',
+                  value: currencyFormatter.format(totalIncome),
+                  color: const Color(0xFF16A34A),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _CalendarInfoPill(
+                  label: 'Da pagare',
+                  value: currencyFormatter.format(totalToPay),
+                  color: const Color(0xFFDC2626),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _CalendarInfoPill(
+                  label: 'Movimenti',
+                  value: movements.length.toString(),
+                  color: colors.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _CalendarInfoPill(
+                  label: 'Saldo mese',
+                  value: currencyFormatter.format(totalIncome - totalToPay),
+                  color: totalIncome - totalToPay >= 0
+                      ? const Color(0xFF16A34A)
+                      : const Color(0xFFDC2626),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: const [
+              _WeekDayLabel('LUN'),
+              _WeekDayLabel('MAR'),
+              _WeekDayLabel('MER'),
+              _WeekDayLabel('GIO'),
+              _WeekDayLabel('VEN'),
+              _WeekDayLabel('SAB'),
+              _WeekDayLabel('DOM'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: startOffset + daysInMonth,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+            ),
+            itemBuilder: (context, index) {
+              if (index < startOffset) {
+                return const SizedBox.shrink();
+              }
+
+              final day = index - startOffset + 1;
+              final dayMovements = movementsByDay[day] ?? [];
+
+              final hasMovements = dayMovements.isNotEmpty;
+              final hasUnpaid = dayMovements.any((item) {
+                return item.type == _CalendarMovementType.expense && !item.isPaid;
+              });
+              final hasIncome = dayMovements.any((item) {
+                return item.type == _CalendarMovementType.income;
+              });
+              final hasPaidExpenses = dayMovements.any((item) {
+                return item.type == _CalendarMovementType.expense && item.isPaid;
+              });
+
+              final isToday = isCurrentMonth && today.day == day;
+
+              return _CalendarDayCell(
+                day: day,
+                isToday: isToday,
+                hasMovements: hasMovements,
+                hasUnpaid: hasUnpaid,
+                hasIncome: hasIncome,
+                hasPaidExpenses: hasPaidExpenses,
+                onTap: () {
+                  _showCalendarDayDetails(
+                    context: context,
+                    date: DateTime(month.year, month.month, day),
+                    items: dayMovements,
+                    currencyFormatter: currencyFormatter,
+                  );
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showCalendarDayDetails({
+  required BuildContext context,
+  required DateTime date,
+  required List<_CalendarDayMovementItem> items,
+  required NumberFormat currencyFormatter,
+}) async {
+  final colors = _DashboardColors.of(context);
+  final dateFormatter = DateFormat('dd/MM/yyyy', 'it_IT');
+
+  final totalIncome = items.fold<double>(
+    0,
+    (sum, item) {
+      if (item.type != _CalendarMovementType.income) return sum;
+
+      return sum + item.amount;
+    },
+  );
+
+  final totalExpenses = items.fold<double>(
+    0,
+    (sum, item) {
+      if (item.type != _CalendarMovementType.expense) return sum;
+
+      return sum + item.amount;
+    },
+  );
+
+  final totalToPay = items.fold<double>(
+    0,
+    (sum, item) {
+      if (item.type != _CalendarMovementType.expense) return sum;
+      if (item.isPaid) return sum;
+
+      return sum + item.amount;
+    },
+  );
+
+  final dailyBalance = totalIncome - totalExpenses;
+
+  await showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        decoration: BoxDecoration(
+          color: colors.card,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(28),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: colors.border,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: colors.primarySoft,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.calendar_today_rounded,
+                      color: colors.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      dateFormatter.format(date),
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _CalendarInfoPill(
+                      label: 'Entrate',
+                      value: currencyFormatter.format(totalIncome),
+                      color: const Color(0xFF16A34A),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _CalendarInfoPill(
+                      label: 'Uscite',
+                      value: currencyFormatter.format(totalExpenses),
+                      color: const Color(0xFFDC2626),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _CalendarInfoPill(
+                      label: 'Da pagare',
+                      value: currencyFormatter.format(totalToPay),
+                      color: const Color(0xFFF59E0B),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _CalendarInfoPill(
+                      label: 'Saldo giorno',
+                      value: currencyFormatter.format(dailyBalance),
+                      color: dailyBalance >= 0
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFFDC2626),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (items.isEmpty)
+                const _EmptyState(
+                  text:
+                      'Nessun movimento registrato per questo giorno.',
+                )
+              else
+                Flexible(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Column(
+                      children: items.map((item) {
+                        final isIncome =
+                            item.type == _CalendarMovementType.income;
+
+                        return _ListRow(
+                          title: item.title,
+                          subtitle: isIncome
+                              ? 'Entrata • ${item.category}'
+                              : '${item.category} • ${item.isPaid ? 'Pagata' : 'Da pagare'}',
+                          trailing:
+                              '${isIncome ? '+' : '-'}${currencyFormatter.format(item.amount)}',
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _CalendarInfoPill extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _CalendarInfoPill({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: colors.isDark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeekDayLabel extends StatelessWidget {
+  final String label;
+
+  const _WeekDayLabel(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return Expanded(
+      child: Center(
+        child: Text(
+          label,
+          style: TextStyle(
+            color: colors.textMuted,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarDayCell extends StatelessWidget {
+  final int day;
+  final bool isToday;
+  final bool hasMovements;
+  final bool hasUnpaid;
+  final bool hasIncome;
+  final bool hasPaidExpenses;
+  final VoidCallback onTap;
+
+  const _CalendarDayCell({
+    required this.day,
+    required this.isToday,
+    required this.hasMovements,
+    required this.hasUnpaid,
+    required this.hasIncome,
+    required this.hasPaidExpenses,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    final Color movementColor;
+
+    if (hasUnpaid) {
+      movementColor = const Color(0xFFDC2626);
+    } else if (hasIncome) {
+      movementColor = const Color(0xFF16A34A);
+    } else if (hasPaidExpenses) {
+      movementColor = colors.primary;
+    } else {
+      movementColor = colors.textSecondary;
+    }
+
+    final backgroundColor = isToday
+        ? colors.primary
+        : hasMovements
+            ? movementColor.withValues(alpha: colors.isDark ? 0.24 : 0.10)
+            : colors.cardSoft;
+
+    final textColor = isToday
+        ? Colors.white
+        : hasMovements
+            ? movementColor
+            : colors.textSecondary;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: isToday ? colors.primary : colors.border,
+            ),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(
+                day.toString(),
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                ),
+              ),
+              if (hasMovements)
+                Positioned(
+                  bottom: 6,
+                  child: Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isToday ? Colors.white : movementColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -2270,6 +4046,7 @@ class _ExpensesList extends StatelessWidget {
       child: items.isEmpty
           ? const _EmptyState(text: 'Nessuna spesa registrata questo mese.')
           : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: items.map((item) {
                 return _ListRow(
                   title: item.title,
@@ -2380,6 +4157,7 @@ class _Panel extends StatelessWidget {
       padding: EdgeInsets.all(isMobile ? 18 : 22),
       decoration: _dashboardCardDecoration(context),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
@@ -2435,8 +4213,9 @@ class _ListRow extends StatelessWidget {
     final isMobile = width < 700;
 
     return Container(
+      width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: EdgeInsets.all(isMobile ? 14 : 16),
+      padding: EdgeInsets.all(isMobile ? 18 : 16),
       decoration: BoxDecoration(
         color: colors.cardSoft,
         borderRadius: BorderRadius.circular(20),

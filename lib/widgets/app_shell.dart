@@ -7,6 +7,7 @@ import '../pages/ai_planner_page.dart';
 import '../pages/dashboard_page.dart';
 import '../pages/expenses_page.dart';
 import '../pages/goals_page.dart';
+import '../pages/achievements_page.dart';
 import '../pages/incomes_page.dart';
 import '../pages/settings_page.dart';
 import '../services/auth_service.dart';
@@ -32,7 +33,7 @@ class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   String _ticketPriority = 'Normale';
 
-  late final List<_AppNavItem> _items = [
+  List<_AppNavItem> get _items => [
     const _AppNavItem(
       label: 'Dashboard',
       icon: Icons.dashboard_rounded,
@@ -48,10 +49,19 @@ class _AppShellState extends State<AppShell> {
       icon: Icons.trending_up_rounded,
       page: IncomesPage(),
     ),
-    const _AppNavItem(
+    _AppNavItem(
       label: 'Obiettivi',
       icon: Icons.flag_rounded,
-      page: GoalsPage(),
+      page: GoalsPage(
+        onOpenAchievements: () => _selectPage(4),
+      ),
+    ),
+    _AppNavItem(
+      label: 'Achievements',
+      icon: Icons.emoji_events_rounded,
+      page: AchievementsPage(
+        onOpenGoals: () => _selectPage(3),
+      ),
     ),
     const _AppNavItem(
       label: 'AI Planner',
@@ -89,13 +99,16 @@ class _AppShellState extends State<AppShell> {
         .collection('ai_insights')
         .snapshots()
         .map((snapshot) {
-          final visibleDocs = snapshot.docs.where((doc) {
+          final unreadDocs = snapshot.docs.where((doc) {
             final data = doc.data();
 
-            return data['is_archived'] != true;
+            final isArchived = data['is_archived'] == true;
+            final isRead = data['is_read'] == true;
+
+            return !isArchived && !isRead;
           }).toList();
 
-          return visibleDocs.length;
+          return unreadDocs.length;
         });
   }
 
@@ -133,7 +146,7 @@ class _AppShellState extends State<AppShell> {
 
   void _openSettings() {
     setState(() {
-      _selectedIndex = 5;
+      _selectedIndex = 6;
     });
   }
 
@@ -554,7 +567,7 @@ class _AppShellState extends State<AppShell> {
             final isDesktop = _isDesktop(context);
             final showSupportButton = kIsWeb && isDesktop;
             final selectedItem = _items[_selectedIndex];
-            final settingsSelected = _selectedIndex == 5;
+            final settingsSelected = _selectedIndex == 6;
 
             return Scaffold(
               backgroundColor: colors.scaffold,
@@ -927,25 +940,73 @@ class _DesktopSidebar extends StatelessWidget {
               const _SidebarLogo(),
               const SizedBox(height: 24),
               Expanded(
-                child: ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    final selected = index == selectedIndex;
+                child: ListView(
+                  children: [
+                    _SidebarItem(
+                      label: items[0].label,
+                      icon: items[0].icon,
+                      selected: selectedIndex == 0,
+                      badgeCount: 0,
+                      onTap: () => onSelect(0),
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      label: items[1].label,
+                      icon: items[1].icon,
+                      selected: selectedIndex == 1,
+                      badgeCount: unpaidExpensesCount,
+                      onTap: () => onSelect(1),
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      label: items[2].label,
+                      icon: items[2].icon,
+                      selected: selectedIndex == 2,
+                      badgeCount: 0,
+                      onTap: () => onSelect(2),
+                    ),
+                    const SizedBox(height: 8),
 
-                    return _SidebarItem(
-                      label: item.label,
-                      icon: item.icon,
-                      selected: selected,
-                      badgeCount: index == 1
-                          ? unpaidExpensesCount
-                          : index == 4
-                          ? aiUnreadCount
-                          : 0,
-                      onTap: () => onSelect(index),
-                    );
-                  },
+                    // Obiettivi + sotto-menu desktop
+                    _SidebarItem(
+                      label: items[3].label,
+                      icon: items[3].icon,
+                      selected: selectedIndex == 3 || selectedIndex == 4,
+                      badgeCount: 0,
+                      onTap: () => onSelect(3),
+                    ),
+                    const SizedBox(height: 6),
+                    _SidebarSubItem(
+                      label: 'I miei obiettivi',
+                      icon: Icons.radio_button_checked_rounded,
+                      selected: selectedIndex == 3,
+                      onTap: () => onSelect(3),
+                    ),
+                    const SizedBox(height: 6),
+                    _SidebarSubItem(
+                      label: 'Achievements',
+                      icon: Icons.emoji_events_rounded,
+                      selected: selectedIndex == 4,
+                      onTap: () => onSelect(4),
+                    ),
+
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      label: items[5].label,
+                      icon: items[5].icon,
+                      selected: selectedIndex == 5,
+                      badgeCount: aiUnreadCount,
+                      onTap: () => onSelect(5),
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarItem(
+                      label: items[6].label,
+                      icon: items[6].icon,
+                      selected: selectedIndex == 6,
+                      badgeCount: 0,
+                      onTap: () => onSelect(6),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 18),
@@ -1060,6 +1121,70 @@ class _SidebarItem extends StatelessWidget {
   }
 }
 
+class _SidebarSubItem extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SidebarSubItem({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _ShellColors.of(context);
+
+    final backgroundColor = selected ? colors.primarySoft : Colors.transparent;
+    final foregroundColor = selected ? colors.primary : colors.textMuted;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 18),
+      child: Material(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Icon(icon, color: foregroundColor, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: foregroundColor,
+                      fontSize: 13.5,
+                      fontWeight:
+                          selected ? FontWeight.w900 : FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SidebarLogoutButton extends StatelessWidget {
   final VoidCallback onLogout;
 
@@ -1121,7 +1246,7 @@ class _MobileBottomNav extends StatelessWidget {
     final expenses = items[1];
     final incomes = items[2];
     final goals = items[3];
-    final aiPlanner = items[4];
+    final aiPlanner = items[5];
 
     return SizedBox(
       height: 88 + bottomPadding,
@@ -1188,9 +1313,9 @@ class _MobileBottomNav extends StatelessWidget {
                   Expanded(
                     child: _MobileNavItem(
                       item: aiPlanner,
-                      selected: selectedIndex == 4,
+                      selected: selectedIndex == 5,
                       badgeCount: aiUnreadCount,
-                      onTap: () => onSelect(4),
+                      onTap: () => onSelect(5),
                     ),
                   ),
                 ],

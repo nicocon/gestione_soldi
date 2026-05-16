@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/finance_service.dart';
+import '../services/notification_service.dart';
 
 class AIPlannerPage extends StatefulWidget {
   const AIPlannerPage({super.key});
@@ -17,6 +18,9 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
 
   final TextEditingController _questionController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
+
+  late Future<Map<String, dynamic>?> _aiProfileFuture;
+  Map<String, dynamic>? _cachedAiProfile;
 
   final NumberFormat _currencyFormatter = NumberFormat.currency(
     locale: 'it_IT',
@@ -42,6 +46,227 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   void initState() {
     super.initState();
     _plannerFuture = _financeService.getAIPlannerSnapshot();
+    _aiProfileFuture = _loadAiProfile();
+
+    _loadAiProfileIntoChat();
+  }
+
+  Future<Map<String, dynamic>?> _loadAiProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return null;
+    }
+
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    final data = userDoc.data();
+
+    if (data == null) {
+      return null;
+    }
+
+    final aiProfile = data['ai_profile'];
+
+    if (aiProfile is Map) {
+      final profile = Map<String, dynamic>.from(aiProfile);
+      _cachedAiProfile = profile;
+
+      return profile;
+    }
+
+    return null;
+  }
+
+  Future<void> _loadAiProfileIntoChat() async {
+    try {
+      final profile = await _aiProfileFuture;
+
+      if (!mounted || profile == null) return;
+
+      final welcomeMessage = _personalizedWelcomeMessage(profile);
+
+      setState(() {
+        _messages
+          ..clear()
+          ..add(
+            _AIMessage(
+              text: welcomeMessage,
+              isUser: false,
+            ),
+          );
+      });
+
+      _scrollChatToBottom();
+    } catch (_) {
+      // Se il profilo non viene caricato, lasciamo il messaggio standard.
+    }
+  }
+
+  String _labelFromValue(String? value, Map<String, String> labels) {
+    if (value == null || value.trim().isEmpty) {
+      return '';
+    }
+
+    return labels[value] ?? value;
+  }
+
+  String _mainGoalLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['main_goal']?.toString(),
+      {
+        'save_more': 'risparmiare di più',
+        'control_expenses': 'controllare meglio le spese',
+        'reach_goal': 'raggiungere un obiettivo importante',
+        'reduce_stress': 'vivere con più tranquillità nella gestione dei soldi',
+      },
+    );
+  }
+
+  String _moneyFeelingLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['money_feeling']?.toString(),
+      {
+        'calm': 'abbastanza tranquillo',
+        'medium': 'così così',
+        'confused': 'un po’ confuso',
+        'stressed': 'spesso in difficoltà',
+      },
+    );
+  }
+
+  String _adviceStyleLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['advice_style']?.toString(),
+      {
+        'practical': 'pratico e diretto',
+        'motivational': 'motivazionale',
+        'detailed': 'dettagliato',
+        'simple': 'semplice e veloce',
+      },
+    );
+  }
+
+  String _aiFrequencyLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['ai_frequency']?.toString(),
+      {
+        'only_when_asked': 'solo quando chiede lui',
+        'occasional': 'ogni tanto',
+        'frequent': 'spesso e in modo più proattivo',
+      },
+    );
+  }
+
+  List<String> _interestLabels(Map<String, dynamic>? profile) {
+    final rawInterests = profile?['interests'];
+
+    if (rawInterests is! List) {
+      return [];
+    }
+
+    final labels = {
+      'travel': 'viaggiare',
+      'home': 'casa',
+      'car': 'auto o moto',
+      'emergency_fund': 'fondo emergenza',
+      'shopping': 'tempo libero',
+      'investing': 'investire nel futuro',
+    };
+
+    return rawInterests
+        .map((item) => labels[item.toString()] ?? item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
+  }
+
+  String _personalizedWelcomeMessage(Map<String, dynamic>? profile) {
+    final mainGoal = _mainGoalLabel(profile);
+    final interests = _interestLabels(profile);
+    final adviceStyle = _adviceStyleLabel(profile);
+
+    if (mainGoal.isEmpty && interests.isEmpty) {
+      return 'Ciao! Sono il tuo AI Planner. Posso aiutarti a capire quanto puoi spendere, quanto puoi risparmiare e come gestire meglio il mese.';
+    }
+
+    final buffer = StringBuffer();
+
+    buffer.write(
+      'Ciao! Ho già letto le risposte iniziali che mi hai dato, quindi posso aiutarti in modo più personale. ',
+    );
+
+    if (mainGoal.isNotEmpty) {
+      buffer.write('So che il tuo obiettivo principale è $mainGoal. ');
+    }
+
+    if (interests.isNotEmpty) {
+      buffer.write(
+        'Terrò conto anche dei tuoi interessi: ${interests.join(', ')}. ',
+      );
+    }
+
+    if (adviceStyle.isNotEmpty) {
+      buffer.write('Userò uno stile $adviceStyle. ');
+    }
+
+    buffer.write(
+      '\n\nPuoi chiedermi, ad esempio: “quanto posso risparmiare questo mese?” oppure “come posso avvicinarmi ai miei obiettivi?”.',
+    );
+
+    return buffer.toString();
+  }
+
+  String _buildAiProfileContext(Map<String, dynamic>? profile) {
+    if (profile == null || profile.isEmpty) {
+      return '';
+    }
+
+    final mainGoal = _mainGoalLabel(profile);
+    final moneyFeeling = _moneyFeelingLabel(profile);
+    final adviceStyle = _adviceStyleLabel(profile);
+    final aiFrequency = _aiFrequencyLabel(profile);
+    final interests = _interestLabels(profile);
+
+    final lines = <String>[];
+
+    if (mainGoal.isNotEmpty) {
+      lines.add('Obiettivo principale dell’utente: $mainGoal.');
+    }
+
+    if (interests.isNotEmpty) {
+      lines.add('Interessi/obiettivi personali: ${interests.join(', ')}.');
+    }
+
+    if (moneyFeeling.isNotEmpty) {
+      lines.add('Come si sente con i soldi: $moneyFeeling.');
+    }
+
+    if (adviceStyle.isNotEmpty) {
+      lines.add('Stile di consiglio preferito: $adviceStyle.');
+    }
+
+    if (aiFrequency.isNotEmpty) {
+      lines.add('Frequenza desiderata dei consigli AI: $aiFrequency.');
+    }
+
+    if (lines.isEmpty) {
+      return '';
+    }
+
+    return lines.join('\n');
+  }
+
+  String _buildPersonalizedQuestion({
+    required String question,
+    required Map<String, dynamic>? profile,
+  }) {
+    // Il profilo AI viene già letto e usato dentro FinanceService.
+    // Qui lasciamo passare solo la domanda pulita dell’utente,
+    // così il riconoscimento locale delle intenzioni resta preciso.
+    return question;
   }
 
   @override
@@ -52,9 +277,18 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   }
 
   Future<void> _refreshPlanner() async {
+    final profileFuture = _loadAiProfile();
+
     setState(() {
       _plannerFuture = _financeService.getAIPlannerSnapshot();
+      _aiProfileFuture = profileFuture;
     });
+
+    final profile = await profileFuture;
+
+    if (profile != null) {
+      _cachedAiProfile = profile;
+    }
   }
 
   double _amountFrom(dynamic value) {
@@ -178,13 +412,14 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
   }
 
   void _startNewChat() {
+    final welcomeMessage = _personalizedWelcomeMessage(_cachedAiProfile);
+
     setState(() {
       _messages
         ..clear()
         ..add(
-          const _AIMessage(
-            text:
-                'Ciao! Sono il tuo AI Planner. Posso aiutarti a capire quanto puoi spendere, quanto puoi risparmiare e come gestire meglio il mese.',
+          _AIMessage(
+            text: welcomeMessage,
             isUser: false,
           ),
         );
@@ -317,6 +552,61 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     }
 
     return false;
+  }
+
+  int _stableNotificationId(String value) {
+    const int fnvPrime = 16777619;
+    int hash = 2166136261;
+
+    for (final codeUnit in value.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * fnvPrime) & 0x7fffffff;
+    }
+
+    return 900000 + (hash % 800000000);
+  }
+
+  bool _shouldNotifyForAiAnswer(String answer) {
+    final text = _normalizeQuestion(answer);
+
+    return _containsAny(text, [
+      'non te lo consiglio',
+      'non ti consiglio',
+      'margine negativo',
+      'spese superano le entrate',
+      'uscite superano le entrate',
+      'situazione critica',
+      'attenzione',
+      'bloccare le spese',
+      'evitare spese extra',
+      'budget disponibile e negativo',
+      'margine stimato resta negativo',
+      'andresti sotto',
+      'sei vicino al margine di sicurezza',
+    ]);
+  }
+
+  Future<void> _notifyImportantAiAnswer(String answer) async {
+    if (!_shouldNotifyForAiAnswer(answer)) return;
+
+    try {
+      final today = DateTime.now();
+
+      final dayKey =
+          '${today.year}_${today.month.toString().padLeft(2, '0')}_${today.day.toString().padLeft(2, '0')}';
+
+      final id = _stableNotificationId(
+        'ai_chat_${dayKey}_${answer.hashCode}',
+      );
+
+      await NotificationService.instance.showAiInsightNotification(
+        id: id,
+        title: 'Consiglio importante da PocketPlan',
+        body: answer,
+      );
+    } catch (_) {
+      // Le notifiche AI non devono mai bloccare la chat.
+    }
   }
 
   bool _hasFinancialIntent(String text) {
@@ -465,9 +755,22 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
     }
 
     try {
-      final answer = await _financeService.askAIPlannerLocally(
+      final profile = _cachedAiProfile ?? await _aiProfileFuture;
+
+      final personalizedQuestion = _buildPersonalizedQuestion(
         question: question,
+        profile: profile,
       );
+
+      final answer = await _financeService.askAIPlannerLocally(
+        question: personalizedQuestion,
+      );
+
+      final refreshedProfile = await _loadAiProfile();
+
+      if (refreshedProfile != null) {
+        _cachedAiProfile = refreshedProfile;
+      }
 
       if (!mounted) return;
 
@@ -479,6 +782,8 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
           ),
         );
       });
+
+      await _notifyImportantAiAnswer(answer);
     } catch (_) {
       if (!mounted) return;
 
@@ -976,6 +1281,17 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
               final unpaidExpensesList = _listOfMaps(data['unpaid_expenses_list']);
               final upcomingExpenses = _listOfMaps(data['upcoming_expenses']);
 
+              final aiProfile = data['ai_profile'] is Map
+                  ? Map<String, dynamic>.from(data['ai_profile'])
+                  : (_cachedAiProfile ?? <String, dynamic>{});
+
+              final aiLearningProfile = data['ai_learning_profile'] is Map
+                  ? Map<String, dynamic>.from(data['ai_learning_profile'])
+                  : <String, dynamic>{};
+
+              final aiPersonalContext =
+                  (data['ai_personal_context'] ?? '').toString();
+
               return RefreshIndicator(
                 color: colors.primary,
                 backgroundColor: colors.card,
@@ -1053,6 +1369,17 @@ class _AIPlannerPageState extends State<AIPlannerPage> {
                             dateFrom: _aiInsightDate,
                             onInsightVisibleInChat: _startChatFromInsight,
                             onArchiveInsight: _archiveAiInsight,
+                          ),
+                          SizedBox(height: isMobile ? 16 : 22),
+                          _AIPersonalProfileCard(
+                            aiProfile: aiProfile,
+                            aiLearningProfile: aiLearningProfile,
+                            aiPersonalContext: aiPersonalContext,
+                            mainGoalLabel: _mainGoalLabel(aiProfile),
+                            moneyFeelingLabel: _moneyFeelingLabel(aiProfile),
+                            adviceStyleLabel: _adviceStyleLabel(aiProfile),
+                            aiFrequencyLabel: _aiFrequencyLabel(aiProfile),
+                            interestLabels: _interestLabels(aiProfile),
                           ),
                           SizedBox(height: isMobile ? 16 : 22),
                           if (isMobile)
@@ -1819,6 +2146,283 @@ class _SummaryItem extends StatelessWidget {
               color: colors.textPrimary,
               fontWeight: FontWeight.w900,
               fontSize: isMobile ? 18 : 22,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AIPersonalProfileCard extends StatelessWidget {
+  final Map<String, dynamic> aiProfile;
+  final Map<String, dynamic> aiLearningProfile;
+  final String aiPersonalContext;
+  final String mainGoalLabel;
+  final String moneyFeelingLabel;
+  final String adviceStyleLabel;
+  final String aiFrequencyLabel;
+  final List<String> interestLabels;
+
+  const _AIPersonalProfileCard({
+    required this.aiProfile,
+    required this.aiLearningProfile,
+    required this.aiPersonalContext,
+    required this.mainGoalLabel,
+    required this.moneyFeelingLabel,
+    required this.adviceStyleLabel,
+    required this.aiFrequencyLabel,
+    required this.interestLabels,
+  });
+
+  bool get _hasDeclaredProfile {
+    return mainGoalLabel.isNotEmpty ||
+        moneyFeelingLabel.isNotEmpty ||
+        adviceStyleLabel.isNotEmpty ||
+        aiFrequencyLabel.isNotEmpty ||
+        interestLabels.isNotEmpty;
+  }
+
+  bool get _hasLearningProfile {
+    return aiLearningProfile.isNotEmpty ||
+        aiPersonalContext.trim().isNotEmpty;
+  }
+
+  String _learningText() {
+    final items = <String>[];
+
+    final preferredGoalFocus =
+        (aiLearningProfile['preferred_goal_focus'] ?? '').toString().trim();
+
+    final spendingPattern =
+        (aiLearningProfile['spending_pattern'] ?? '').toString().trim();
+
+    final budgetSensitivity =
+        (aiLearningProfile['budget_sensitivity'] ?? '').toString().trim();
+
+    final strongestGoalCategory =
+        (aiLearningProfile['strongest_goal_category'] ?? '').toString().trim();
+
+    if (preferredGoalFocus.isNotEmpty) {
+      items.add('Focus osservato: $preferredGoalFocus');
+    }
+
+    if (spendingPattern.isNotEmpty) {
+      items.add('Pattern spese: $spendingPattern');
+    }
+
+    if (budgetSensitivity.isNotEmpty) {
+      items.add('Sensibilità budget: $budgetSensitivity');
+    }
+
+    if (strongestGoalCategory.isNotEmpty) {
+      items.add('Categoria da monitorare: $strongestGoalCategory');
+    }
+
+    if (aiLearningProfile['often_asks_before_spending'] == true) {
+      items.add('Ti piace verificare prima di spendere');
+    }
+
+    if (aiLearningProfile['often_asks_about_saving'] == true) {
+      items.add('Chiedi spesso consigli sul risparmio');
+    }
+
+    if (aiLearningProfile['often_asks_about_goals'] == true) {
+      items.add('Ti interessano molto gli obiettivi');
+    }
+
+    if (items.isEmpty) {
+      return 'Più userai la chat AI, più PocketPlan capirà come aiutarti meglio.';
+    }
+
+    return items.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+
+    if (!_hasDeclaredProfile && !_hasLearningProfile) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: _cardDecoration(context),
+        child: const _SectionTitle(
+          title: 'PocketPlan sta imparando a conoscerti',
+          subtitle:
+              'Rispondi alle domande iniziali e usa la chat AI: così i consigli diventeranno sempre più personali.',
+          icon: Icons.psychology_rounded,
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle(
+            title: 'PocketPlan ti conosce così',
+            subtitle:
+                'Queste informazioni aiutano l’AI a darti consigli più personali e meno generici.',
+            icon: Icons.auto_awesome_rounded,
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (mainGoalLabel.isNotEmpty)
+                _ProfileBadge(
+                  icon: Icons.flag_rounded,
+                  label: 'Obiettivo',
+                  value: mainGoalLabel,
+                  color: colors.primary,
+                ),
+              if (interestLabels.isNotEmpty)
+                _ProfileBadge(
+                  icon: Icons.favorite_rounded,
+                  label: 'Interessi',
+                  value: interestLabels.join(', '),
+                  color: const Color(0xFF7C3AED),
+                ),
+              if (moneyFeelingLabel.isNotEmpty)
+                _ProfileBadge(
+                  icon: Icons.psychology_alt_rounded,
+                  label: 'Rapporto soldi',
+                  value: moneyFeelingLabel,
+                  color: const Color(0xFFF59E0B),
+                ),
+              if (adviceStyleLabel.isNotEmpty)
+                _ProfileBadge(
+                  icon: Icons.tune_rounded,
+                  label: 'Stile AI',
+                  value: adviceStyleLabel,
+                  color: const Color(0xFF16A34A),
+                ),
+              if (aiFrequencyLabel.isNotEmpty)
+                _ProfileBadge(
+                  icon: Icons.notifications_active_rounded,
+                  label: 'Frequenza',
+                  value: aiFrequencyLabel,
+                  color: const Color(0xFF0F766E),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: colors.cardSoft,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: colors.border,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.school_rounded,
+                  color: colors.primary,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _learningText(),
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _ProfileBadge({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _AIPlannerColors.of(context);
+    final isMobile = MediaQuery.sizeOf(context).width < 800;
+
+    return Container(
+      constraints: BoxConstraints(
+        minWidth: isMobile ? double.infinity : 220,
+        maxWidth: isMobile ? double.infinity : 340,
+      ),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: colors.isDark ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: color.withValues(alpha: colors.isDark ? 0.24 : 0.14),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: colors.isDark ? 0.20 : 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                    height: 1.25,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'notification_service.dart';
 import 'watch_sync_service.dart';
 
 class FinanceService {
@@ -46,6 +47,88 @@ class FinanceService {
     return _db.collection('users').doc(_uid).collection('bank_transfers');
   }
 
+  Future<Map<String, dynamic>> getAiPersonalProfile() async {
+    final snapshot = await userProfileRef.get();
+    final data = snapshot.data() ?? {};
+
+    final rawAiProfile = data['ai_profile'];
+    final rawAiLearningProfile = data['ai_learning_profile'];
+
+    final aiProfile = rawAiProfile is Map
+        ? Map<String, dynamic>.from(rawAiProfile)
+        : <String, dynamic>{};
+
+    final aiLearningProfile = rawAiLearningProfile is Map
+        ? Map<String, dynamic>.from(rawAiLearningProfile)
+        : <String, dynamic>{};
+
+    return {
+      'ai_profile': aiProfile,
+      'ai_learning_profile': aiLearningProfile,
+    };
+  }
+
+  Future<void> updateAiLearningProfile({
+    String? preferredGoalFocus,
+    String? spendingPattern,
+    String? budgetSensitivity,
+    String? responsePreference,
+    String? lastFinancialMood,
+    String? strongestGoalCategory,
+    bool? oftenAsksBeforeSpending,
+    bool? oftenAsksAboutSaving,
+    bool? oftenAsksAboutGoals,
+  }) async {
+    final updates = <String, dynamic>{
+      'ai_learning_profile.updated_at': FieldValue.serverTimestamp(),
+    };
+
+    if (preferredGoalFocus != null) {
+      updates['ai_learning_profile.preferred_goal_focus'] = preferredGoalFocus;
+    }
+
+    if (spendingPattern != null) {
+      updates['ai_learning_profile.spending_pattern'] = spendingPattern;
+    }
+
+    if (budgetSensitivity != null) {
+      updates['ai_learning_profile.budget_sensitivity'] = budgetSensitivity;
+    }
+
+    if (responsePreference != null) {
+      updates['ai_learning_profile.response_preference'] = responsePreference;
+    }
+
+    if (lastFinancialMood != null) {
+      updates['ai_learning_profile.last_financial_mood'] = lastFinancialMood;
+    }
+
+    if (strongestGoalCategory != null) {
+      updates['ai_learning_profile.strongest_goal_category'] =
+          strongestGoalCategory;
+    }
+
+    if (oftenAsksBeforeSpending != null) {
+      updates['ai_learning_profile.often_asks_before_spending'] =
+          oftenAsksBeforeSpending;
+    }
+
+    if (oftenAsksAboutSaving != null) {
+      updates['ai_learning_profile.often_asks_about_saving'] =
+          oftenAsksAboutSaving;
+    }
+
+    if (oftenAsksAboutGoals != null) {
+      updates['ai_learning_profile.often_asks_about_goals'] =
+          oftenAsksAboutGoals;
+    }
+
+    await userProfileRef.set(
+      updates,
+      SetOptions(merge: true),
+    );
+  }
+
   Stream<QuerySnapshot<Map<String, dynamic>>> incomesStream() {
     return incomesRef.orderBy('date', descending: true).snapshots();
   }
@@ -64,6 +147,124 @@ class FinanceService {
 
   Stream<QuerySnapshot<Map<String, dynamic>>> bankTransfersStream() {
     return bankTransfersRef.orderBy('date', descending: true).snapshots();
+  }
+
+  int _stableNotificationBaseId(String value) {
+    const int fnvPrime = 16777619;
+    int hash = 2166136261;
+
+    for (final codeUnit in value.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * fnvPrime) & 0x7fffffff;
+    }
+
+    return 100000 + (hash % 800000000);
+  }
+
+  List<int> _expenseReminderIds(String expenseId) {
+    final baseId = _stableNotificationBaseId('expense_$expenseId');
+
+    return [
+      baseId,
+      baseId + 1,
+      baseId + 2,
+    ];
+  }
+
+  DateTime _dayAtNine(DateTime date) {
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      9,
+    );
+  }
+
+  Future<void> _cancelExpenseRemindersSafely(String expenseId) async {
+    try {
+      for (final id in _expenseReminderIds(expenseId)) {
+        await NotificationService.instance.cancelNotification(id);
+      }
+    } catch (_) {
+      // Le notifiche non devono mai bloccare il salvataggio dei dati.
+    }
+  }
+
+  Future<void> _syncExpenseReminderSafely({
+    required String expenseId,
+    required String title,
+    required double amount,
+    required DateTime? dueDate,
+    required bool isPaid,
+    required bool reminderEnabled,
+    required bool isPlanned,
+  }) async {
+    try {
+      await _cancelExpenseRemindersSafely(expenseId);
+
+      if (isPlanned) return;
+      if (isPaid) return;
+      if (!reminderEnabled) return;
+      if (dueDate == null) return;
+
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+
+      final reminderIds = _expenseReminderIds(expenseId);
+
+      final reminderDays = [
+        dueDay.subtract(const Duration(days: 2)),
+        dueDay.subtract(const Duration(days: 1)),
+        dueDay,
+      ];
+
+      for (int i = 0; i < reminderDays.length; i++) {
+        final reminderDay = reminderDays[i];
+
+        DateTime scheduledDate = _dayAtNine(reminderDay);
+
+        if (reminderDay == today && !scheduledDate.isAfter(now)) {
+          scheduledDate = now.add(const Duration(minutes: 1));
+        }
+
+        if (!scheduledDate.isAfter(now)) continue;
+
+        await NotificationService.instance.scheduleExpenseReminder(
+          id: reminderIds[i],
+          title: title,
+          amount: amount,
+          scheduledDate: scheduledDate,
+        );
+      }
+    } catch (_) {
+      // Le notifiche non devono mai bloccare il salvataggio dei dati.
+    }
+  }
+
+  Future<void> _notifyAiInsightSafely({
+    required String code,
+    required String title,
+    required String message,
+    required int priority,
+  }) async {
+    if (priority < 80) return;
+
+    try {
+      final today = DateTime.now();
+      final dayKey =
+          '${today.year}_${today.month.toString().padLeft(2, '0')}_${today.day.toString().padLeft(2, '0')}';
+
+      final id = _stableNotificationBaseId('ai_${dayKey}_$code');
+
+      await NotificationService.instance.showAiInsightNotification(
+        id: id,
+        title: title,
+        body: message,
+      );
+    } catch (_) {
+      // L'AI non deve mai bloccare il flusso principale dell'app.
+    }
   }
 
   Future<Map<String, dynamic>> getUserProfile() async {
@@ -478,6 +679,8 @@ class FinanceService {
         bankAccountId != null &&
         bankAccountId.trim().isNotEmpty;
 
+    final expenseRef = expensesRef.doc();
+
     await _db.runTransaction((transaction) async {
       DocumentReference<Map<String, dynamic>>? accountRef;
       DocumentSnapshot<Map<String, dynamic>>? accountSnapshot;
@@ -486,8 +689,6 @@ class FinanceService {
         accountRef = bankAccountsRef.doc(bankAccountId);
         accountSnapshot = await transaction.get(accountRef);
       }
-
-      final expenseRef = expensesRef.doc();
 
       transaction.set(expenseRef, {
         'title': title.trim(),
@@ -528,6 +729,16 @@ class FinanceService {
       }
     });
 
+    await _syncExpenseReminderSafely(
+      expenseId: expenseRef.id,
+      title: title.trim(),
+      amount: amount,
+      dueDate: dueDate,
+      isPaid: isPaid,
+      reminderEnabled: reminderEnabled,
+      isPlanned: isPlanned,
+    );
+
     await _refreshWatchSummarySafely();
     await _generateAiInsightsSafely();
   }
@@ -557,10 +768,16 @@ class FinanceService {
 
     final repeatGroupId = expensesRef.doc().id;
     final batch = _db.batch();
+    final createdExpenses = <Map<String, dynamic>>[];
 
     for (var i = 0; i < dueDates.length; i++) {
       final docRef = expensesRef.doc();
       final dueDate = dueDates[i];
+
+      createdExpenses.add({
+        'id': docRef.id,
+        'dueDate': dueDate,
+      });
 
       batch.set(docRef, {
         'title': title.trim(),
@@ -585,6 +802,23 @@ class FinanceService {
     }
 
     await batch.commit();
+
+    for (final item in createdExpenses) {
+      final expenseId = item['id']?.toString();
+      final dueDate = item['dueDate'];
+
+      if (expenseId == null || dueDate is! DateTime) continue;
+
+      await _syncExpenseReminderSafely(
+        expenseId: expenseId,
+        title: title.trim(),
+        amount: amount,
+        dueDate: dueDate,
+        isPaid: false,
+        reminderEnabled: reminderEnabled,
+        isPlanned: false,
+      );
+    }
 
     await _refreshWatchSummarySafely();
   }
@@ -717,6 +951,16 @@ class FinanceService {
       }
     });
 
+    await _syncExpenseReminderSafely(
+      expenseId: expenseId,
+      title: title.trim(),
+      amount: amount,
+      dueDate: dueDate,
+      isPaid: isPaid,
+      reminderEnabled: reminderEnabled,
+      isPlanned: type == 'planned',
+    );
+
     await _refreshWatchSummarySafely();
     await _generateAiInsightsSafely();
   }
@@ -803,6 +1047,25 @@ class FinanceService {
         }
       }
     });
+
+    if (isPaid) {
+      await _cancelExpenseRemindersSafely(expenseId);
+    } else {
+      final updatedExpense = await expensesRef.doc(expenseId).get();
+      final updatedData = updatedExpense.data();
+
+      if (updatedData != null) {
+        await _syncExpenseReminderSafely(
+          expenseId: expenseId,
+          title: (updatedData['title'] ?? 'Spesa').toString(),
+          amount: _toDouble(updatedData['amount']),
+          dueDate: _toDate(updatedData['due_date']),
+          isPaid: updatedData['is_paid'] == true,
+          reminderEnabled: updatedData['reminder_enabled'] == true,
+          isPlanned: (updatedData['type'] ?? 'standard').toString() == 'planned',
+        );
+      }
+    }
 
     await _refreshWatchSummarySafely();
     await _generateAiInsightsSafely();
@@ -1046,6 +1309,8 @@ class FinanceService {
         });
       }
     });
+
+    await _cancelExpenseRemindersSafely(expenseId);
 
     await _refreshWatchSummarySafely();
     await _generateAiInsightsSafely();
@@ -1359,6 +1624,15 @@ class FinanceService {
     final expensesSnapshot = await expensesRef.get();
     final goalsSnapshot = await goalsRef.get();
     final bankAccounts = await _getBankAccountsForAI();
+    final aiPersonalProfile = await getAiPersonalProfile();
+
+    final aiProfile = Map<String, dynamic>.from(
+      aiPersonalProfile['ai_profile'] ?? {},
+    );
+
+    final aiLearningProfile = Map<String, dynamic>.from(
+      aiPersonalProfile['ai_learning_profile'] ?? {},
+    );
 
     double totalBankBalance = 0.0;
 
@@ -1716,6 +1990,19 @@ class FinanceService {
       'suggestions': suggestions,
       'financial_health_score': financialHealthScore,
       'financial_mood': mood,
+
+      // Profilo AI dichiarato dall’utente durante onboarding
+      'ai_profile': aiProfile,
+
+      // Profilo AI imparato dall’uso reale dell’app
+      'ai_learning_profile': aiLearningProfile,
+
+      // Contesto già pronto da usare nelle risposte AI
+      'ai_personal_context': _buildAiPersonalContext(
+        aiProfile: aiProfile,
+        aiLearningProfile: aiLearningProfile,
+      ),
+
       'updated_at': Timestamp.now(),
     };
   }
@@ -1731,9 +2018,139 @@ class FinanceService {
 
     final snapshot = await getAIPlannerSnapshot();
 
+    await _learnFromAIQuestionSafely(
+      question: cleanedQuestion,
+      snapshot: snapshot,
+    );
+
     return _buildLocalAIPlannerAnswer(
       question: cleanedQuestion,
       snapshot: snapshot,
+    );
+  }
+
+  Future<void> _learnFromAIQuestionSafely({
+    required String question,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    try {
+      await _learnFromAIQuestion(
+        question: question,
+        snapshot: snapshot,
+      );
+    } catch (_) {
+      // L’apprendimento AI non deve mai bloccare la risposta all’utente.
+    }
+  }
+
+  Future<void> _learnFromAIQuestion({
+    required String question,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    final normalized = _normalizeAIQuestion(question);
+
+    final asksBeforeSpending = _questionContainsAny(normalized, [
+      'posso spendere',
+      'posso comprare',
+      'me lo posso permettere',
+      'posso permettermi',
+      'acquistare',
+      'comprare',
+      'spendere',
+    ]);
+
+    final asksAboutSaving = _questionContainsAny(normalized, [
+      'risparmiare',
+      'mettere da parte',
+      'quanto posso risparmiare',
+      'accantonare',
+    ]);
+
+    final asksAboutGoals = _questionContainsAny(normalized, [
+      'obiettivo',
+      'obiettivi',
+      'target',
+      'raggiungere',
+      'scadenza',
+    ]);
+
+    final monthlyIncome = _toDouble(snapshot['monthly_income']);
+    final totalExpenses = _toDouble(snapshot['total_expenses']);
+    final availableBudget = _toDouble(snapshot['available_budget']);
+    final safetyBuffer = _toDouble(snapshot['safety_buffer']);
+    final topCategoryName = (snapshot['top_category_name'] ?? '').toString();
+    final mood = (snapshot['financial_mood'] ?? '').toString();
+
+    String spendingPattern = '';
+
+    if (monthlyIncome > 0) {
+      final ratio = totalExpenses / monthlyIncome;
+
+      if (ratio >= 0.90) {
+        spendingPattern = 'spese molto alte rispetto alle entrate';
+      } else if (ratio >= 0.75) {
+        spendingPattern = 'spese da monitorare';
+      } else if (ratio <= 0.50) {
+        spendingPattern = 'gestione prudente delle spese';
+      } else {
+        spendingPattern = 'spese abbastanza equilibrate';
+      }
+    }
+
+    String budgetSensitivity = '';
+
+    if (availableBudget < 0) {
+      budgetSensitivity = 'alta';
+    } else if (safetyBuffer > 0 && availableBudget <= safetyBuffer) {
+      budgetSensitivity = 'medio-alta';
+    } else {
+      budgetSensitivity = 'media';
+    }
+
+    String responsePreference = '';
+
+    final aiProfile = snapshot['ai_profile'];
+    if (aiProfile is Map) {
+      final profile = Map<String, dynamic>.from(aiProfile);
+      final adviceStyle = (profile['advice_style'] ?? '').toString();
+
+      if (adviceStyle == 'simple') {
+        responsePreference = 'risposte brevi e pratiche';
+      } else if (adviceStyle == 'detailed') {
+        responsePreference = 'risposte dettagliate e spiegate';
+      } else if (adviceStyle == 'motivational') {
+        responsePreference = 'risposte motivazionali e rassicuranti';
+      } else if (adviceStyle == 'practical') {
+        responsePreference = 'risposte pratiche e dirette';
+      }
+    }
+
+    String preferredGoalFocus = '';
+
+    final activeGoals = snapshot['active_goals'];
+
+    if (activeGoals is List && activeGoals.isNotEmpty) {
+      final firstGoal = activeGoals.first;
+
+      if (firstGoal is Map) {
+        preferredGoalFocus = (firstGoal['title'] ?? '').toString();
+      }
+    }
+
+    await updateAiLearningProfile(
+      preferredGoalFocus:
+          preferredGoalFocus.trim().isEmpty ? null : preferredGoalFocus,
+      spendingPattern: spendingPattern.trim().isEmpty ? null : spendingPattern,
+      budgetSensitivity:
+          budgetSensitivity.trim().isEmpty ? null : budgetSensitivity,
+      responsePreference:
+          responsePreference.trim().isEmpty ? null : responsePreference,
+      lastFinancialMood: mood.trim().isEmpty ? null : mood,
+      strongestGoalCategory:
+          topCategoryName.trim().isEmpty ? null : topCategoryName,
+      oftenAsksBeforeSpending: asksBeforeSpending ? true : null,
+      oftenAsksAboutSaving: asksAboutSaving ? true : null,
+      oftenAsksAboutGoals: asksAboutGoals ? true : null,
     );
   }
 
@@ -1749,8 +2166,21 @@ class FinanceService {
     final topCategoryName = (snapshot['top_category_name'] ?? '').toString();
     final topCategoryAmount = _toDouble(snapshot['top_category_amount']);
     final mainGoal = snapshot['main_goal'];
+    final personalOpening = _personalizedOpeningFromSnapshot(snapshot);
 
     if (monthlyIncome <= 0) return;
+
+    await updateAiLearningProfile(
+      spendingPattern: totalExpenses > monthlyIncome * 0.85
+          ? 'spese alte rispetto alle entrate'
+          : 'spese monitorate nel mese',
+      budgetSensitivity: availableBudget <= safetyBuffer && safetyBuffer > 0
+          ? 'medio-alta'
+          : 'media',
+      lastFinancialMood: (snapshot['financial_mood'] ?? '').toString(),
+      strongestGoalCategory:
+          topCategoryName.trim().isEmpty ? null : topCategoryName,
+    );
 
     final insightsRef = _db.collection('users').doc(_uid).collection('ai_insights');
 
@@ -1806,6 +2236,13 @@ class FinanceService {
           'updated_at': FieldValue.serverTimestamp(),
         });
 
+        await _notifyAiInsightSafely(
+          code: cleanedCode,
+          title: title,
+          message: message,
+          priority: priority,
+        );
+
         return;
       }
 
@@ -1820,6 +2257,13 @@ class FinanceService {
         'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       });
+
+      await _notifyAiInsightSafely(
+        code: cleanedCode,
+        title: title,
+        message: message,
+        priority: priority,
+      );
     }
 
     final expenseRatio = totalExpenses / monthlyIncome;
@@ -1829,7 +2273,7 @@ class FinanceService {
         code: 'expenses_over_income',
         title: 'Spese sopra le entrate',
         message:
-            'Questo mese le spese totali superano le entrate. Ti consiglio di bloccare le spese extra e controllare le uscite non urgenti.',
+            '${personalOpening}questo mese le spese totali superano le entrate. Ti consiglio di bloccare le spese extra e controllare le uscite non urgenti.',
         type: 'danger',
         priority: 100,
       );
@@ -1842,7 +2286,7 @@ class FinanceService {
         code: 'budget_almost_finished',
         title: 'Budget quasi esaurito',
         message:
-            'Hai già usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio rallentare con le spese fino a fine mese.',
+            '${personalOpening}Hai già usato circa ${(expenseRatio * 100).toStringAsFixed(0)}% delle entrate mensili. Meglio rallentare con le spese fino a fine mese.',
         type: 'warning',
         priority: 90,
       );
@@ -2224,6 +2668,242 @@ List<String> _buildAIPlannerSuggestions({
     return 'Critica';
   }
 
+  String _labelFromValue(String? value, Map<String, String> labels) {
+    if (value == null || value.trim().isEmpty) {
+      return '';
+    }
+
+    return labels[value] ?? value;
+  }
+
+  String _mainGoalLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['main_goal']?.toString(),
+      {
+        'save_more': 'risparmiare di più',
+        'control_expenses': 'controllare meglio le spese',
+        'reach_goal': 'raggiungere un obiettivo importante',
+        'reduce_stress': 'vivere con più tranquillità nella gestione dei soldi',
+      },
+    );
+  }
+
+  String _moneyFeelingLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['money_feeling']?.toString(),
+      {
+        'calm': 'abbastanza tranquillo',
+        'medium': 'così così',
+        'confused': 'un po’ confuso',
+        'stressed': 'spesso in difficoltà',
+      },
+    );
+  }
+
+  String _adviceStyleLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['advice_style']?.toString(),
+      {
+        'practical': 'pratico e diretto',
+        'motivational': 'motivazionale',
+        'detailed': 'dettagliato',
+        'simple': 'semplice e veloce',
+      },
+    );
+  }
+
+  String _aiFrequencyLabel(Map<String, dynamic>? profile) {
+    return _labelFromValue(
+      profile?['ai_frequency']?.toString(),
+      {
+        'only_when_asked': 'solo quando chiede lui',
+        'occasional': 'ogni tanto',
+        'frequent': 'spesso e in modo proattivo',
+      },
+    );
+  }
+
+  List<String> _interestLabels(Map<String, dynamic>? profile) {
+    final rawInterests = profile?['interests'];
+
+    if (rawInterests is! List) {
+      return [];
+    }
+
+    final labels = {
+      'travel': 'viaggiare',
+      'home': 'casa',
+      'car': 'auto o moto',
+      'emergency_fund': 'fondo emergenza',
+      'shopping': 'tempo libero',
+      'investing': 'investire nel futuro',
+    };
+
+    return rawInterests
+        .map((item) => labels[item.toString()] ?? item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
+  }
+
+  String _buildAiPersonalContext({
+    required Map<String, dynamic> aiProfile,
+    required Map<String, dynamic> aiLearningProfile,
+  }) {
+    final lines = <String>[];
+
+    final mainGoal = _mainGoalLabel(aiProfile);
+    final interests = _interestLabels(aiProfile);
+    final moneyFeeling = _moneyFeelingLabel(aiProfile);
+    final adviceStyle = _adviceStyleLabel(aiProfile);
+    final aiFrequency = _aiFrequencyLabel(aiProfile);
+
+    if (mainGoal.isNotEmpty) {
+      lines.add('Obiettivo principale dichiarato: $mainGoal.');
+    }
+
+    if (interests.isNotEmpty) {
+      lines.add('Interessi personali dichiarati: ${interests.join(', ')}.');
+    }
+
+    if (moneyFeeling.isNotEmpty) {
+      lines.add('Rapporto emotivo con i soldi: $moneyFeeling.');
+    }
+
+    if (adviceStyle.isNotEmpty) {
+      lines.add('Stile di consiglio preferito: $adviceStyle.');
+    }
+
+    if (aiFrequency.isNotEmpty) {
+      lines.add('Frequenza desiderata dei consigli: $aiFrequency.');
+    }
+
+    final preferredGoalFocus =
+        (aiLearningProfile['preferred_goal_focus'] ?? '').toString();
+
+    final spendingPattern =
+        (aiLearningProfile['spending_pattern'] ?? '').toString();
+
+    final budgetSensitivity =
+        (aiLearningProfile['budget_sensitivity'] ?? '').toString();
+
+    final responsePreference =
+        (aiLearningProfile['response_preference'] ?? '').toString();
+
+    final strongestGoalCategory =
+        (aiLearningProfile['strongest_goal_category'] ?? '').toString();
+
+    if (preferredGoalFocus.isNotEmpty) {
+      lines.add('Focus ricorrente osservato: $preferredGoalFocus.');
+    }
+
+    if (strongestGoalCategory.isNotEmpty) {
+      lines.add('Categoria obiettivo più forte osservata: $strongestGoalCategory.');
+    }
+
+    if (spendingPattern.isNotEmpty) {
+      lines.add('Pattern di spesa osservato: $spendingPattern.');
+    }
+
+    if (budgetSensitivity.isNotEmpty) {
+      lines.add('Sensibilità al budget osservata: $budgetSensitivity.');
+    }
+
+    if (responsePreference.isNotEmpty) {
+      lines.add('Preferenza risposta osservata: $responsePreference.');
+    }
+
+    if (aiLearningProfile['often_asks_before_spending'] == true) {
+      lines.add(
+        'L’utente tende a chiedere conferma prima di spendere: rispondere con chiarezza sul sì/no e sul margine residuo.',
+      );
+    }
+
+    if (aiLearningProfile['often_asks_about_saving'] == true) {
+      lines.add(
+        'L’utente chiede spesso quanto può risparmiare: proporre quote realistiche e sostenibili.',
+      );
+    }
+
+    if (aiLearningProfile['often_asks_about_goals'] == true) {
+      lines.add(
+        'L’utente mostra interesse per gli obiettivi: collegare i consigli agli obiettivi attivi quando ha senso.',
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  String _personalizedOpeningFromSnapshot(Map<String, dynamic> snapshot) {
+    final aiProfile = snapshot['ai_profile'];
+    final aiLearningProfile = snapshot['ai_learning_profile'];
+
+    final profile = aiProfile is Map
+        ? Map<String, dynamic>.from(aiProfile)
+        : <String, dynamic>{};
+
+    final learning = aiLearningProfile is Map
+        ? Map<String, dynamic>.from(aiLearningProfile)
+        : <String, dynamic>{};
+
+    final mainGoal = _mainGoalLabel(profile);
+    final interests = _interestLabels(profile);
+    final moneyFeeling = _moneyFeelingLabel(profile);
+    final adviceStyle = _adviceStyleLabel(profile);
+
+    final parts = <String>[];
+
+    if (mainGoal.isNotEmpty) {
+      parts.add('visto che il tuo obiettivo principale è $mainGoal');
+    }
+
+    if (interests.isNotEmpty) {
+      parts.add('tenendo conto che per te contano ${interests.join(', ')}');
+    }
+
+    if (moneyFeeling == 'spesso in difficoltà' || moneyFeeling == 'un po’ confuso') {
+      parts.add('senza metterti pressione');
+    }
+
+    if (adviceStyle == 'semplice e veloce') {
+      parts.add('vado dritto al punto');
+    }
+
+    if (learning['often_asks_before_spending'] == true) {
+      parts.add('ti do una risposta chiara sul margine reale');
+    }
+
+    if (parts.isEmpty) {
+      return '';
+    }
+
+    return '${parts.join(', ')}: ';
+  }
+
+  String _personalizedClosingFromSnapshot(Map<String, dynamic> snapshot) {
+    final aiProfile = snapshot['ai_profile'];
+
+    final profile = aiProfile is Map
+        ? Map<String, dynamic>.from(aiProfile)
+        : <String, dynamic>{};
+
+    final moneyFeeling = _moneyFeelingLabel(profile);
+    final adviceStyle = _adviceStyleLabel(profile);
+
+    if (moneyFeeling == 'spesso in difficoltà') {
+      return ' La cosa importante è non sistemare tutto insieme: prima proteggi le spese essenziali, poi pensiamo agli obiettivi.';
+    }
+
+    if (moneyFeeling == 'un po’ confuso') {
+      return ' Ti conviene ragionare per passi: prima entrate e spese obbligatorie, poi margine libero, poi obiettivi.';
+    }
+
+    if (adviceStyle == 'motivazionale') {
+      return ' Sei sulla strada giusta: anche piccoli miglioramenti, ripetuti ogni mese, fanno una grande differenza.';
+    }
+
+    return '';
+  }
+
   String _normalizeAIQuestion(String value) {
   var text = value.toLowerCase().trim();
 
@@ -2413,6 +3093,8 @@ String _expenseControlAdvice({
     final mainGoal = snapshot['main_goal'];
 
     final amountInQuestion = _extractFirstAmountFromText(lowerQuestion);
+    final personalizedOpening = _personalizedOpeningFromSnapshot(snapshot);
+    final personalizedClosing = _personalizedClosingFromSnapshot(snapshot);
 
     final askedAboutAffordability = _questionContainsAny(lowerQuestion, [
       'posso',
@@ -2540,10 +3222,10 @@ String _expenseControlAdvice({
       }
 
       if (daily < 10) {
-        return 'Puoi considerare circa ${_formatMoneyText(daily)} al giorno, ma è un margine basso. Ti consiglio di usarlo solo per spese davvero necessarie.';
+        return '${personalizedOpening}Puoi considerare circa ${_formatMoneyText(daily)} al giorno, ma è un margine basso. Ti consiglio di usarlo solo per spese davvero necessarie.$personalizedClosing';
       }
 
-      return 'Per il resto del mese puoi considerare circa ${_formatMoneyText(daily)} al giorno. Cerca comunque di non usarlo tutto, così mantieni un margine per imprevisti.';
+      return '${personalizedOpening}Per il resto del mese puoi considerare circa ${_formatMoneyText(daily)} al giorno. Cerca comunque di non usarlo tutto, così mantieni un margine per imprevisti.$personalizedClosing';
     }
 
     if (askedAboutAffordability) {
@@ -2566,32 +3248,36 @@ String _expenseControlAdvice({
           return 'Tecnicamente puoi farlo, perché considerando anche la banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili. Però dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero ${_formatMoneyText(remainingAfterPurchase)}, andando sotto il margine di sicurezza consigliato di ${_formatMoneyText(safetyBuffer)}. Io ti direi: fallo solo se è davvero necessario.';
         }
 
-        return 'Sì, puoi permettertelo. Considerando anche i soldi in banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}. Se vuoi essere prudente, evita comunque di fare troppe spese simili nello stesso mese.';
+        return '${personalizedOpening}Sì, puoi permettertelo. Considerando anche i soldi in banca hai ${_formatMoneyText(availableBudgetWithBank)} disponibili e dopo una spesa da ${_formatMoneyText(amountInQuestion)} ti resterebbero circa ${_formatMoneyText(remainingAfterPurchase)}. Se vuoi essere prudente, evita comunque di fare troppe spese simili nello stesso mese.$personalizedClosing';
       }
 
       if (realSpendableBudget <= 0) {
         return 'In questo momento non ti consiglio nuove spese extra. Considerando entrate, spese e banca, il margine realmente spendibile è basso perché sarebbe meglio tenere circa ${_formatMoneyText(safetyBuffer)} come sicurezza.';
       }
 
-      return 'In questo momento puoi spendere circa ${_formatMoneyText(realSpendableBudget)} senza intaccare troppo il margine di sicurezza. Questa stima considera anche i soldi presenti in banca.';
+      return '${personalizedOpening}In questo momento puoi spendere circa ${_formatMoneyText(realSpendableBudget)} senza intaccare troppo il margine di sicurezza. Questa stima considera anche i soldi presenti in banca.$personalizedClosing';
     }
 
     if (askedAboutSaving || askedAboutGoals) {
-      return _goalAdviceText(
+      final answer = _goalAdviceText(
         mainGoal: mainGoal is Map<String, dynamic> ? mainGoal : null,
         spendableBudget: spendableBudget,
         spendableBudgetWithBank: spendableBudgetWithBank,
       );
+
+      return '$personalizedOpening$answer$personalizedClosing';
     }
 
     if (askedAboutExpenses) {
-      return _expenseControlAdvice(
+      final answer = _expenseControlAdvice(
         monthlyIncome: monthlyIncome,
         totalExpenses: totalExpenses,
         previousTotalExpenses: previousTotalExpenses,
         topCategoryName: topCategoryName,
         topCategoryAmount: topCategoryAmount,
       );
+
+      return '$personalizedOpening$answer$personalizedClosing';
     }
 
     if (askedAboutDanger) {
@@ -2650,7 +3336,7 @@ String _expenseControlAdvice({
 
     final daily = dailyAvailableWithBank > 0 ? dailyAvailableWithBank : dailyAvailable;
 
-    return 'Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Il budget mensile stimato è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(daily)} al giorno per il resto del mese, mantenendo prudenza.';
+    return '${personalizedOpening}Guardando la tua situazione, hai ${_formatMoneyText(monthlyIncome)} di entrate e ${_formatMoneyText(totalExpenses)} di uscite totali previste questo mese. Nei conti registrati hai ${_formatMoneyText(totalBankBalance)}. Il budget mensile stimato è ${_formatMoneyText(availableBudget)}, mentre considerando anche la banca il margine stimato è ${_formatMoneyText(availableBudgetWithBank)}. Il tuo stato è "$mood"${score is int ? ' con un punteggio di $score/100' : ''}. Puoi usare circa ${_formatMoneyText(daily)} al giorno per il resto del mese, mantenendo prudenza.$personalizedClosing';
   }
 
   String currentVsPreviousSentence({

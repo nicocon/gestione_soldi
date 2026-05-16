@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+
+import '../services/auth_service.dart';
 
 enum PocketPlanThemeMode {
   system,
@@ -21,6 +24,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final AuthService _authService = AuthService();
 
   static const String _supportEmail = 'soluzioni@pocketplan.it';
 
@@ -43,6 +47,12 @@ class _SettingsPageState extends State<SettingsPage> {
   String _profileCountry = '';
   String _profilePhone = '';
   DateTime? _profileBirthDate;
+
+  String _aiMainGoal = '';
+  String _aiMoneyFeeling = '';
+  String _aiAdviceStyle = '';
+  String _aiFrequency = '';
+  List<String> _aiInterests = [];
 
   PocketPlanThemeMode _selectedThemeMode = PocketPlanThemeMode.system;
 
@@ -97,6 +107,56 @@ class _SettingsPageState extends State<SettingsPage> {
       case PocketPlanThemeMode.system:
         return 'PocketPlan segue il tema del dispositivo.';
     }
+  }
+
+    String _labelFromValue(String value, Map<String, String> labels) {
+    if (value.trim().isEmpty) {
+      return '';
+    }
+
+    return labels[value] ?? value;
+  }
+
+  String get _aiMainGoalLabel {
+    return _labelFromValue(
+      _aiMainGoal,
+      const {
+        'save_more': 'Risparmiare di più',
+        'control_expenses': 'Controllare meglio le spese',
+        'reach_goal': 'Raggiungere un obiettivo',
+        'reduce_stress': 'Vivere più tranquillo',
+      },
+    );
+  }
+
+  String get _aiAdviceStyleLabel {
+    return _labelFromValue(
+      _aiAdviceStyle,
+      const {
+        'practical': 'Pratico e diretto',
+        'motivational': 'Motivazionale',
+        'detailed': 'Dettagliato',
+        'simple': 'Semplice e veloce',
+      },
+    );
+  }
+
+  String get _aiProfileSubtitle {
+    final parts = <String>[];
+
+    if (_aiMainGoalLabel.isNotEmpty) {
+      parts.add(_aiMainGoalLabel);
+    }
+
+    if (_aiAdviceStyleLabel.isNotEmpty) {
+      parts.add(_aiAdviceStyleLabel);
+    }
+
+    if (parts.isEmpty) {
+      return 'Personalizza obiettivi, interessi e stile dei consigli AI.';
+    }
+
+    return parts.join(' · ');
   }
 
   String get _displayName {
@@ -198,6 +258,16 @@ class _SettingsPageState extends State<SettingsPage> {
       final savedThemeMode = data?['theme_mode']?.toString();
       final savedRole = (data?['role'] ?? 'user').toString().trim();
 
+      final rawAiProfile = data?['ai_profile'];
+      final aiProfile = rawAiProfile is Map
+          ? Map<String, dynamic>.from(rawAiProfile)
+          : <String, dynamic>{};
+
+      final rawInterests = aiProfile['interests'];
+      final interests = rawInterests is List
+          ? rawInterests.map((item) => item.toString()).toList()
+          : <String>[];
+
       if (!mounted) return;
 
       setState(() {
@@ -208,6 +278,12 @@ class _SettingsPageState extends State<SettingsPage> {
         _profileBirthDate = birthDate;
         _selectedThemeMode = _themeModeFromString(savedThemeMode);
         _userRole = savedRole.isEmpty ? 'user' : savedRole;
+
+        _aiMainGoal = (aiProfile['main_goal'] ?? '').toString();
+        _aiMoneyFeeling = (aiProfile['money_feeling'] ?? '').toString();
+        _aiAdviceStyle = (aiProfile['advice_style'] ?? '').toString();
+        _aiFrequency = (aiProfile['ai_frequency'] ?? '').toString();
+        _aiInterests = interests;
 
         if (_profileName.isEmpty && parts.isNotEmpty) {
           _profileName = parts.first;
@@ -585,6 +661,469 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+    Future<void> _showAiProfileDialog() async {
+    final user = _user;
+
+    if (user == null) {
+      await _showInfoDialog(
+        title: 'Account non disponibile',
+        description:
+            'Non riesco a trovare l’utente corrente. Prova a uscire e rientrare nell’app.',
+        icon: Icons.person_off_rounded,
+      );
+      return;
+    }
+
+    final colors = _SettingsColors.of(context);
+
+    String tempMainGoal = _aiMainGoal.isEmpty ? 'save_more' : _aiMainGoal;
+    String tempMoneyFeeling =
+        _aiMoneyFeeling.isEmpty ? 'medium' : _aiMoneyFeeling;
+    String tempAdviceStyle =
+        _aiAdviceStyle.isEmpty ? 'practical' : _aiAdviceStyle;
+    String tempAiFrequency =
+        _aiFrequency.isEmpty ? 'occasional' : _aiFrequency;
+    List<String> tempInterests = List<String>.from(_aiInterests);
+
+    bool isSaving = false;
+
+    const mainGoalOptions = [
+      _AiProfileOption(
+        value: 'save_more',
+        title: 'Risparmiare di più',
+        subtitle: 'Voglio mettere da parte più soldi ogni mese.',
+        icon: Icons.savings_rounded,
+      ),
+      _AiProfileOption(
+        value: 'control_expenses',
+        title: 'Controllare meglio le spese',
+        subtitle: 'Voglio capire dove finiscono i miei soldi.',
+        icon: Icons.receipt_long_rounded,
+      ),
+      _AiProfileOption(
+        value: 'reach_goal',
+        title: 'Raggiungere un obiettivo',
+        subtitle: 'Voglio organizzarmi per qualcosa di importante.',
+        icon: Icons.flag_rounded,
+      ),
+      _AiProfileOption(
+        value: 'reduce_stress',
+        title: 'Vivere più tranquillo',
+        subtitle: 'Voglio avere meno ansia quando penso ai soldi.',
+        icon: Icons.favorite_rounded,
+      ),
+    ];
+
+    const interestOptions = [
+      _AiProfileOption(
+        value: 'travel',
+        title: 'Viaggiare',
+        subtitle: 'Viaggi e vacanze.',
+        icon: Icons.flight_takeoff_rounded,
+      ),
+      _AiProfileOption(
+        value: 'home',
+        title: 'Casa',
+        subtitle: 'Affitto, mutuo, arredamento o acquisto casa.',
+        icon: Icons.home_rounded,
+      ),
+      _AiProfileOption(
+        value: 'car',
+        title: 'Auto o moto',
+        subtitle: 'Spese, manutenzione o acquisti importanti.',
+        icon: Icons.directions_car_rounded,
+      ),
+      _AiProfileOption(
+        value: 'emergency_fund',
+        title: 'Fondo emergenza',
+        subtitle: 'Una sicurezza per gli imprevisti.',
+        icon: Icons.health_and_safety_rounded,
+      ),
+      _AiProfileOption(
+        value: 'shopping',
+        title: 'Tempo libero',
+        subtitle: 'Passioni e uscite senza esagerare.',
+        icon: Icons.shopping_bag_rounded,
+      ),
+      _AiProfileOption(
+        value: 'investing',
+        title: 'Investire in futuro',
+        subtitle: 'Prepararsi meglio per il domani.',
+        icon: Icons.trending_up_rounded,
+      ),
+    ];
+
+    const moneyFeelingOptions = [
+      _AiProfileOption(
+        value: 'calm',
+        title: 'Abbastanza tranquillo',
+        subtitle: 'Mi sento abbastanza in controllo.',
+        icon: Icons.sentiment_satisfied_alt_rounded,
+      ),
+      _AiProfileOption(
+        value: 'medium',
+        title: 'Così così',
+        subtitle: 'A volte controllo, a volte mi sfugge qualcosa.',
+        icon: Icons.sentiment_neutral_rounded,
+      ),
+      _AiProfileOption(
+        value: 'confused',
+        title: 'Un po’ confuso',
+        subtitle: 'Non sempre capisco dove vanno i soldi.',
+        icon: Icons.psychology_rounded,
+      ),
+      _AiProfileOption(
+        value: 'stressed',
+        title: 'Spesso in difficoltà',
+        subtitle: 'Vorrei sentirmi più sicuro a fine mese.',
+        icon: Icons.sentiment_dissatisfied_rounded,
+      ),
+    ];
+
+    const adviceStyleOptions = [
+      _AiProfileOption(
+        value: 'practical',
+        title: 'Pratico e diretto',
+        subtitle: 'Consigli chiari, senza troppi giri di parole.',
+        icon: Icons.bolt_rounded,
+      ),
+      _AiProfileOption(
+        value: 'motivational',
+        title: 'Motivazionale',
+        subtitle: 'Voglio sentirmi incoraggiato e seguito.',
+        icon: Icons.emoji_events_rounded,
+      ),
+      _AiProfileOption(
+        value: 'detailed',
+        title: 'Dettagliato',
+        subtitle: 'Voglio capire bene numeri e ragionamenti.',
+        icon: Icons.analytics_rounded,
+      ),
+      _AiProfileOption(
+        value: 'simple',
+        title: 'Semplice e veloce',
+        subtitle: 'Poche parole, ma utili.',
+        icon: Icons.speed_rounded,
+      ),
+    ];
+
+    const aiFrequencyOptions = [
+      _AiProfileOption(
+        value: 'only_when_asked',
+        title: 'Solo quando chiedo io',
+        subtitle: 'Preferisco aprire l’AI quando mi serve.',
+        icon: Icons.chat_bubble_outline_rounded,
+      ),
+      _AiProfileOption(
+        value: 'occasional',
+        title: 'Ogni tanto',
+        subtitle: 'Mi va bene ricevere qualche consiglio utile.',
+        icon: Icons.notifications_active_rounded,
+      ),
+      _AiProfileOption(
+        value: 'frequent',
+        title: 'Seguimi spesso',
+        subtitle: 'Voglio suggerimenti più frequenti e proattivi.',
+        icon: Icons.auto_awesome_rounded,
+      ),
+    ];
+
+    await showDialog(
+      context: context,
+      barrierDismissible: !isSaving,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void toggleInterest(String value) {
+              setDialogState(() {
+                if (tempInterests.contains(value)) {
+                  tempInterests.remove(value);
+                } else {
+                  tempInterests.add(value);
+                }
+              });
+            }
+
+            Future<void> saveAiProfile() async {
+              if (tempInterests.isEmpty) {
+                await _showInfoDialog(
+                  title: 'Seleziona almeno un interesse',
+                  description:
+                      'Scegli almeno una cosa importante per te, così PocketPlan può personalizzare meglio i consigli.',
+                  icon: Icons.info_outline_rounded,
+                );
+                return;
+              }
+
+              setDialogState(() {
+                isSaving = true;
+              });
+
+              try {
+                await _db.collection('users').doc(user.uid).set(
+                  {
+                    'onboarding_completed': true,
+                    'ai_profile': {
+                      'main_goal': tempMainGoal,
+                      'interests': tempInterests,
+                      'money_feeling': tempMoneyFeeling,
+                      'advice_style': tempAdviceStyle,
+                      'ai_frequency': tempAiFrequency,
+                      'updated_at': FieldValue.serverTimestamp(),
+                    },
+                    'updated_at': FieldValue.serverTimestamp(),
+                  },
+                  SetOptions(merge: true),
+                );
+
+                if (!mounted) return;
+
+                setState(() {
+                  _aiMainGoal = tempMainGoal;
+                  _aiInterests = List<String>.from(tempInterests);
+                  _aiMoneyFeeling = tempMoneyFeeling;
+                  _aiAdviceStyle = tempAdviceStyle;
+                  _aiFrequency = tempAiFrequency;
+                });
+
+                Navigator.pop(dialogContext);
+
+                await _showInfoDialog(
+                  title: 'Profilo AI aggiornato',
+                  description:
+                      'PocketPlan userà queste preferenze per rendere i consigli AI più personali.',
+                  icon: Icons.check_circle_rounded,
+                );
+              } catch (_) {
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isSaving = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore',
+                  description:
+                      'Non sono riuscito a salvare il profilo AI. Riprova tra poco.',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 24,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 900,
+                  maxHeight: MediaQuery.sizeOf(context).height - 48,
+                ),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: colors.card,
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.shadow.withValues(
+                          alpha: colors.isDark ? 0.35 : 0.14,
+                        ),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          _DialogIcon(
+                            icon: Icons.auto_awesome_rounded,
+                            colors: colors,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Profilo AI',
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Modifica come PocketPlan deve conoscerti e consigliarti.',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: isSaving
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close_rounded),
+                            color: colors.textSecondary,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _AiProfileGroup(
+                                title: 'Obiettivo principale',
+                                subtitle:
+                                    'Qual è la cosa più importante che vuoi ottenere?',
+                                options: mainGoalOptions,
+                                selectedValue: tempMainGoal,
+                                onSelected: (value) {
+                                  setDialogState(() {
+                                    tempMainGoal = value;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 18),
+                              _AiProfileGroup(
+                                title: 'Interessi personali',
+                                subtitle:
+                                    'Scegli una o più cose che contano per te.',
+                                options: interestOptions,
+                                selectedValues: tempInterests,
+                                allowMultiple: true,
+                                onSelected: toggleInterest,
+                              ),
+                              const SizedBox(height: 18),
+                              _AiProfileGroup(
+                                title: 'Rapporto con i soldi',
+                                subtitle:
+                                    'Come ti senti oggi nella gestione economica?',
+                                options: moneyFeelingOptions,
+                                selectedValue: tempMoneyFeeling,
+                                onSelected: (value) {
+                                  setDialogState(() {
+                                    tempMoneyFeeling = value;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 18),
+                              _AiProfileGroup(
+                                title: 'Stile dei consigli',
+                                subtitle:
+                                    'Come vuoi che PocketPlan ti risponda?',
+                                options: adviceStyleOptions,
+                                selectedValue: tempAdviceStyle,
+                                onSelected: (value) {
+                                  setDialogState(() {
+                                    tempAdviceStyle = value;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 18),
+                              _AiProfileGroup(
+                                title: 'Frequenza consigli AI',
+                                subtitle:
+                                    'Quanto vuoi essere seguito dall’intelligenza di PocketPlan?',
+                                options: aiFrequencyOptions,
+                                selectedValue: tempAiFrequency,
+                                onSelected: (value) {
+                                  setDialogState(() {
+                                    tempAiFrequency = value;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 50,
+                              child: OutlinedButton(
+                                onPressed: isSaving
+                                    ? null
+                                    : () => Navigator.pop(dialogContext),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: colors.textPrimary,
+                                  side: BorderSide(
+                                    color: colors.border,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                child: const Text('Annulla'),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SizedBox(
+                              height: 50,
+                              child: ElevatedButton.icon(
+                                onPressed: isSaving ? null : saveAiProfile,
+                                icon: isSaving
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.2,
+                                          color: colors.primaryText,
+                                        ),
+                                      )
+                                    : const Icon(Icons.save_rounded),
+                                label: Text(
+                                  isSaving ? 'Salvataggio...' : 'Salva',
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: colors.primary,
+                                  foregroundColor: colors.primaryText,
+                                  disabledBackgroundColor:
+                                      colors.primary.withValues(alpha: 0.45),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -2695,57 +3234,259 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-    Future<void> _showDeleteDataDialog() async {
+  Future<void> _exportUserData() async {
+    try {
+      final exportData = await _authService.exportCurrentUserData();
+
+      const encoder = JsonEncoder.withIndent('  ');
+      final jsonText = encoder.convert(exportData);
+
+      await Clipboard.setData(
+        ClipboardData(text: jsonText),
+      );
+
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Dati esportati',
+        description:
+            'La copia dei tuoi dati è stata generata in formato JSON e copiata negli appunti. Puoi incollarla in un file di testo e salvarla.',
+        icon: Icons.file_download_done_rounded,
+      );
+    } catch (error) {
+      debugPrint('Errore export dati: $error');
+
+      if (!mounted) return;
+
+      await _showInfoDialog(
+        title: 'Errore export',
+        description:
+            'Non sono riuscito a esportare i dati. Controlla la connessione e riprova.',
+        icon: Icons.error_outline_rounded,
+      );
+    }
+  }
+
+  Future<void> _showDeleteDataDialog() async {
     final colors = _SettingsColors.of(context);
+    final confirmController = TextEditingController();
+
+    bool canDelete = false;
+    bool isDeleting = false;
 
     await showDialog(
       context: context,
-      builder: (_) {
-        return AlertDialog(
-          backgroundColor: colors.card,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          title: Text(
-            'Eliminare i dati?',
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          content: Text(
-            'Questa funzione verrà collegata più avanti. Prima di eliminare dati reali aggiungeremo una conferma sicura, così l’utente non rischia di cancellare tutto per errore.',
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontWeight: FontWeight.w600,
-              height: 1.4,
-            ),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-          actions: [
-            SizedBox(
-              height: 46,
-              child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textPrimary,
-                  side: BorderSide(
-                    color: colors.border,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> confirmDelete() async {
+              if (!canDelete || isDeleting) return;
+
+              setDialogState(() {
+                isDeleting = true;
+              });
+
+              try {
+                await _authService.deleteCurrentUserAccountAndData();
+
+                if (!mounted) return;
+
+                if (Navigator.canPop(dialogContext)) {
+                  Navigator.pop(dialogContext);
+                }
+              } on FirebaseAuthException catch (error) {
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isDeleting = false;
+                });
+
+                if (error.code == 'requires-recent-login') {
+                  await _showInfoDialog(
+                    title: 'Accesso da confermare',
+                    description:
+                        'Per sicurezza Firebase richiede un accesso recente prima di eliminare il profilo. Esci, rientra nell’app e riprova subito.',
+                    icon: Icons.lock_clock_rounded,
+                  );
+                  return;
+                }
+
+                await _showInfoDialog(
+                  title: 'Errore eliminazione',
+                  description:
+                      'Non sono riuscito a eliminare il profilo. Errore: ${error.message ?? error.code}',
+                  icon: Icons.error_outline_rounded,
+                );
+              } catch (error) {
+                debugPrint('Errore eliminazione account: $error');
+
+                if (!mounted) return;
+
+                setDialogState(() {
+                  isDeleting = false;
+                });
+
+                await _showInfoDialog(
+                  title: 'Errore eliminazione',
+                  description:
+                      'Non sono riuscito a eliminare il profilo. Riprova tra poco.',
+                  icon: Icons.error_outline_rounded,
+                );
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: colors.card,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              title: Row(
+                children: [
+                  _DialogIcon(
+                    icon: Icons.delete_forever_rounded,
+                    colors: colors,
+                    size: 42,
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Eliminare il profilo?',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w800,
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Questa azione eliminerà definitivamente il profilo PocketPlan, i dati finanziari, gli obiettivi, gli insight AI e i ticket collegati all’account.',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Per confermare scrivi ELIMINA qui sotto.',
+                    style: TextStyle(
+                      color: colors.danger,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: confirmController,
+                    enabled: !isDeleting,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'ELIMINA',
+                      hintStyle: TextStyle(
+                        color: colors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      filled: true,
+                      fillColor: colors.cardSoft,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(
+                          color: colors.border,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(
+                          color: colors.danger,
+                          width: 1.4,
+                        ),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        canDelete = value.trim().toUpperCase() == 'ELIMINA';
+                      });
+                    },
+                  ),
+                ],
+              ),
+              actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+              actions: [
+                SizedBox(
+                  height: 46,
+                  child: OutlinedButton(
+                    onPressed: isDeleting
+                        ? null
+                        : () => Navigator.pop(dialogContext),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.textPrimary,
+                      side: BorderSide(
+                        color: colors.border,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    child: const Text('Annulla'),
                   ),
                 ),
-                child: const Text('Chiudi'),
-              ),
-            ),
-          ],
+                SizedBox(
+                  height: 46,
+                  child: ElevatedButton.icon(
+                    onPressed: canDelete && !isDeleting ? confirmDelete : null,
+                    icon: isDeleting
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                              color: colors.primaryText,
+                            ),
+                          )
+                        : const Icon(Icons.delete_forever_rounded),
+                    label: Text(
+                      isDeleting ? 'Eliminazione...' : 'Elimina profilo',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colors.danger,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor:
+                          colors.danger.withValues(alpha: 0.35),
+                      disabledForegroundColor:
+                          Colors.white.withValues(alpha: 0.75),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+
+    confirmController.dispose();
   }
 
   Future<void> _sendPasswordResetEmail() async {
@@ -2844,6 +3585,13 @@ class _SettingsPageState extends State<SettingsPage> {
                           subtitle: _themeModeSubtitle,
                           trailing: _PlanBadge(text: _themeModeLabel),
                           onTap: _showThemeDialog,
+                        ),
+                        _SettingsActionTile(
+                          icon: Icons.auto_awesome_rounded,
+                          title: 'Profilo AI',
+                          subtitle: _aiProfileSubtitle,
+                          trailing: const _PlanBadge(text: 'AI'),
+                          onTap: _showAiProfileDialog,
                         ),
                         _SettingsActionTile(
                           icon: Icons.euro_rounded,
@@ -2981,19 +3729,14 @@ class _SettingsPageState extends State<SettingsPage> {
                           icon: Icons.file_download_rounded,
                           title: 'Esporta dati',
                           subtitle:
-                              'Scarica una copia delle tue entrate e spese.',
-                          onTap: () => _showInfoDialog(
-                            title: 'Esporta dati',
-                            description:
-                                'Qui potremo aggiungere un export CSV o PDF con movimenti, obiettivi e riepiloghi.',
-                            icon: Icons.file_download_rounded,
-                          ),
+                              'Crea una copia dei tuoi dati in formato JSON.',
+                          onTap: _exportUserData,
                         ),
                         _SettingsActionTile(
                           icon: Icons.delete_forever_rounded,
-                          title: 'Elimina dati',
+                          title: 'Elimina profilo',
                           subtitle:
-                              'Cancella i dati salvati nel tuo account.',
+                              'Cancella definitivamente account e dati salvati.',
                           danger: true,
                           onTap: _showDeleteDataDialog,
                         ),
@@ -3445,6 +4188,224 @@ class _PlanPriceBox extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _AiProfileOption {
+  final String value;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  const _AiProfileOption({
+    required this.value,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
+}
+
+class _AiProfileGroup extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final List<_AiProfileOption> options;
+  final String? selectedValue;
+  final List<String>? selectedValues;
+  final bool allowMultiple;
+  final ValueChanged<String> onSelected;
+
+  const _AiProfileGroup({
+    required this.title,
+    required this.subtitle,
+    required this.options,
+    required this.onSelected,
+    this.selectedValue,
+    this.selectedValues,
+    this.allowMultiple = false,
+  });
+
+  bool _isSelected(String value) {
+    if (allowMultiple) {
+      return selectedValues?.contains(value) ?? false;
+    }
+
+    return selectedValue == value;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          subtitle,
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontWeight: FontWeight.w600,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 650;
+
+            if (isMobile) {
+              return Column(
+                children: options
+                    .map(
+                      (option) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _AiProfileOptionTile(
+                          option: option,
+                          selected: _isSelected(option.value),
+                          onTap: () => onSelected(option.value),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              );
+            }
+
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: options
+                  .map(
+                    (option) => SizedBox(
+                      width: (constraints.maxWidth - 10) / 2,
+                      child: _AiProfileOptionTile(
+                        option: option,
+                        selected: _isSelected(option.value),
+                        onTap: () => onSelected(option.value),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _AiProfileOptionTile extends StatelessWidget {
+  final _AiProfileOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _AiProfileOptionTile({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _SettingsColors.of(context);
+
+    return Material(
+      color: selected ? colors.primarySoft : colors.cardSoft,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected ? colors.primary : colors.border,
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: selected ? colors.primary : colors.card,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: selected ? colors.primary : colors.border,
+                  ),
+                ),
+                child: Icon(
+                  option.icon,
+                  color: selected ? colors.primaryText : colors.primary,
+                  size: 21,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      option.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      option.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: selected ? colors.primary : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? colors.primary : colors.textMuted,
+                    width: 1.6,
+                  ),
+                ),
+                child: selected
+                    ? Icon(
+                        Icons.check_rounded,
+                        color: colors.primaryText,
+                        size: 16,
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

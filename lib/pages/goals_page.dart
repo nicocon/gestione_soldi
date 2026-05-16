@@ -12,7 +12,12 @@ enum GoalFilter {
 }
 
 class GoalsPage extends StatefulWidget {
-  const GoalsPage({super.key});
+  final VoidCallback? onOpenAchievements;
+
+  const GoalsPage({
+    super.key,
+    this.onOpenAchievements,
+  });
 
   @override
   State<GoalsPage> createState() => _GoalsPageState();
@@ -356,6 +361,13 @@ class _GoalsPageState extends State<GoalsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (isMobile) ...[
+                          _MobileGoalsSectionTabs(
+                            selectedSection: _MobileGoalsSection.goals,
+                            onOpenAchievements: widget.onOpenAchievements,
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         _GoalsHeader(
                           totalTarget: _currencyFormatter.format(totalTarget),
                           totalSaved: _currencyFormatter.format(totalSaved),
@@ -621,6 +633,130 @@ InputDecoration _goalsInputDecoration({
       ),
     ),
   );
+}
+
+enum _MobileGoalsSection {
+  goals,
+  achievements,
+}
+
+class _MobileGoalsSectionTabs extends StatelessWidget {
+  final _MobileGoalsSection selectedSection;
+  final VoidCallback? onOpenAchievements;
+
+  const _MobileGoalsSectionTabs({
+    required this.selectedSection,
+    required this.onOpenAchievements,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: colors.card,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colors.border),
+        boxShadow: [
+          BoxShadow(
+            color: colors.shadow.withValues(
+              alpha: colors.isDark ? 0.18 : 0.035,
+            ),
+            blurRadius: colors.isDark ? 22 : 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _MobileGoalsSectionTabButton(
+              label: 'Obiettivi',
+              icon: Icons.flag_rounded,
+              selected: selectedSection == _MobileGoalsSection.goals,
+              onTap: () {},
+            ),
+          ),
+          Expanded(
+            child: _MobileGoalsSectionTabButton(
+              label: 'Achievements',
+              icon: Icons.emoji_events_rounded,
+              selected: selectedSection == _MobileGoalsSection.achievements,
+              onTap: () {
+                if (selectedSection == _MobileGoalsSection.achievements) {
+                  return;
+                }
+
+                onOpenAchievements?.call();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MobileGoalsSectionTabButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MobileGoalsSectionTabButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _GoalsColors.of(context);
+
+    final backgroundColor = selected ? colors.primarySoft : Colors.transparent;
+    final foregroundColor = selected ? colors.primary : colors.textSecondary;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      height: 44,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: foregroundColor,
+              size: 18,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foregroundColor,
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 Future<DateTime?> _showGoalsDatePicker({
